@@ -1,0 +1,1194 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>nxb studio</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0e0b11">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<style>
+:root{
+  --bg:#0e0b11; --panel:#151119; --panel2:#1b1520; --edge:#2b2333;
+  --ink:#e9e3ef; --dim:#9a8da8; --faint:#635a70;
+  --cc:#e0a267; --cx:#7fd6bd; --accent:#c792ea; --ok:#8ce06a; --bad:#f07178;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
+  font:13px ui-monospace,"SF Mono",Menlo,monospace;
+  display:flex;flex-direction:column}
+button{background:transparent;color:var(--ink);border:1px solid var(--edge);
+  border-radius:6px;padding:6px 11px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select,textarea{background:#0b090e;color:var(--ink);
+  border:1px solid var(--edge);border-radius:6px;padding:7px 9px;font:inherit;
+  width:100%}
+input:focus,select:focus,textarea:focus{outline:1px solid var(--accent)}
+label{color:var(--faint);font-size:10px;text-transform:uppercase;
+  letter-spacing:.11em}
+
+/* --- top bar ----------------------------------------------------------- */
+/* WRAPS INSTEAD OF CLIPPING. At a narrower window this row ran off the right
+   edge and took "Auto layout" with it -- a control the operator could see the
+   left half of and could not press. */
+#top{display:flex;align-items:stretch;background:var(--panel);flex-wrap:wrap;
+  border-bottom:1px solid var(--edge);min-height:44px;flex:0 0 auto}
+#nav,#usebar,#tabs{min-width:0}
+#tabs{flex-wrap:wrap}
+#brand{display:flex;align-items:center;padding:0 16px;font-size:10.5px;
+  letter-spacing:.2em;color:var(--dim);border-right:1px solid var(--edge)}
+#tabs{display:flex}
+.tab{display:flex;align-items:center;gap:8px;padding:0 15px;cursor:pointer;
+  border-right:1px solid var(--edge);white-space:nowrap;color:var(--dim);
+  max-width:210px;font-size:12px}
+.tab:hover{background:var(--panel2)}
+.tab.on{background:var(--bg);color:var(--ink);
+  box-shadow:inset 0 -2px 0 var(--accent)}
+.tab .st{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.tab.live .st{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+.tab .cl{color:var(--faint)} .tab .cl:hover{color:var(--bad)}
+#newtab{padding:0 14px;display:flex;align-items:center;cursor:pointer;
+  color:var(--faint);border-right:1px solid var(--edge);font-size:16px}
+#newtab:hover{color:var(--accent)}
+#conn{display:flex;align-items:center;gap:7px;padding:0 16px;
+  color:var(--dim);font-size:11.5px}
+#conn .d{width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 7px var(--ok)}
+#conn.off .d{background:var(--bad);box-shadow:0 0 7px var(--bad)}
+#nav{display:flex;align-items:center;gap:4px;margin:0 auto;flex-shrink:0}
+.nv{padding:6px 14px;cursor:pointer;color:var(--dim);font-size:12.5px;
+  border-bottom:2px solid transparent}
+.nv:hover{color:var(--ink)}
+.nv.on{color:var(--ink);border-bottom-color:var(--accent)}
+/* Always visible, because it is what the operator designs AGAINST: he picks
+   which vendor carries a fleet based on which one has headroom. */
+#usebar{display:flex;align-items:center;gap:14px;padding:0 14px;font-size:11.5px;
+  color:var(--dim);cursor:pointer;white-space:nowrap}
+#usebar:hover{color:var(--ink)}
+#usebar b{font-weight:600}
+#usebar .gauge{display:inline-block;width:52px;height:5px;border-radius:3px;
+  background:var(--edge);vertical-align:middle;margin:0 6px;overflow:hidden}
+#usebar .gauge i{display:block;height:100%;background:var(--ok)}
+#usebar .gauge.warn i{background:#e8c46a} #usebar .gauge.hot i{background:var(--bad)}
+#usebar .none{color:var(--faint)}
+/* A REFRESH IS A DELIBERATE ACT, because it costs a Claude turn. It is a
+   button rather than a poll, and the reading always carries its age so a
+   stale number cannot be mistaken for a live one. */
+#usebar .ask{color:var(--accent);cursor:pointer;padding:0 3px}
+#usebar .ask:hover{text-decoration:underline}
+#topr{display:flex;align-items:center;gap:6px;padding:0 14px}
+.ic{width:30px;height:30px;display:grid;place-items:center;cursor:pointer;
+  color:var(--dim);border-radius:6px}
+.ic:hover{color:var(--accent);background:var(--panel2)}
+
+/* --- toolbar ----------------------------------------------------------- */
+#bar{display:flex;align-items:center;gap:12px;padding:9px 16px;flex-wrap:wrap;
+  border-bottom:1px solid var(--edge);background:var(--bg);flex:0 0 auto}
+#bar .f input{min-width:90px}
+#bar .f{display:flex;align-items:center;gap:8px}
+#bar .f input{width:auto}
+.seg{display:flex;border:1px solid var(--edge);border-radius:8px;
+  overflow:hidden;margin:0 auto}
+.seg div{padding:6px 15px;cursor:pointer;color:var(--dim);font-size:12.5px}
+.seg div.on{background:var(--panel2);color:var(--ink)}
+
+/* --- body -------------------------------------------------------------- */
+/* A FLEX ROW WITH DRAGGABLE SPLITTERS, not a fixed grid. Three hardcoded
+   widths crushed the canvas on a narrower display with no way to give it
+   room. NOTE: the splitters make this FIVE children -- under the old
+   three-column grid they wrapped onto a second row and dropped the inspector
+   underneath the canvas, which is what a silently-failed CSS edit looked
+   like. */
+#body{display:flex;flex:1;min-height:0}
+#rail{flex:0 0 auto;width:224px;min-width:150px}
+#stage{flex:1 1 auto;min-width:220px}
+aside{flex:0 0 auto;width:356px;min-width:240px}
+.split{flex:0 0 5px;cursor:col-resize;background:var(--edge);opacity:.45;
+  transition:opacity .12s}
+.split:hover,.split.on{opacity:1;background:var(--accent)}
+#rail{border-right:1px solid var(--edge);padding:14px;overflow-y:auto}
+#rail h3{font-size:10px;letter-spacing:.14em;color:var(--faint);
+  text-transform:uppercase;margin:0 0 12px;font-weight:400}
+.comp{display:flex;align-items:center;gap:11px;padding:12px;margin-bottom:9px;
+  border:1px solid var(--edge);border-radius:9px;cursor:grab;
+  background:var(--panel);user-select:none}
+.comp:hover{border-color:var(--accent)}
+.comp .gl{width:26px;height:26px;display:grid;place-items:center;
+  color:var(--dim);flex:0 0 auto}
+.comp b{display:block;font-weight:600;font-size:12.5px}
+.comp small{color:var(--faint);font-size:10.5px}
+.prov{display:flex;align-items:center;gap:10px;padding:10px 12px;
+  margin-bottom:8px;border:1px solid var(--edge);border-radius:8px;
+  cursor:grab;background:var(--panel);user-select:none;font-size:12.5px}
+.prov:hover{border-color:var(--accent)}
+.prov i{width:3px;height:17px;border-radius:2px;display:block}
+.prov.cc i{background:var(--cc)} .prov.cx i{background:var(--cx)}
+#rail p{color:var(--faint);font-size:11px;line-height:1.65;margin-top:16px}
+
+#stage{position:relative;overflow:hidden;background:var(--bg);
+  background-image:radial-gradient(circle,#241d2b 1px,transparent 1px);
+  background-size:13px 13px}
+#stage.over{box-shadow:inset 0 0 0 1px var(--accent)}
+#world{position:absolute;inset:0;transform-origin:0 0}
+#empty{position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--faint);pointer-events:none;text-align:center;line-height:1.9}
+/* An ID selector beats the UA's [hidden]{display:none}, so `el.hidden = true`
+   was a no-op and the placeholder sat under every node. Any element given a
+   display here needs its own hidden rule, so this covers the whole page
+   rather than the one case that bit. */
+[hidden]{display:none !important}
+.node{position:absolute;width:212px;border:1px solid var(--edge);
+  border-radius:10px;background:var(--panel);user-select:none;
+  box-shadow:0 6px 20px #0008;touch-action:none}
+.node.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),
+  0 8px 26px #000a}
+.node .hd{display:flex;align-items:center;gap:8px;padding:10px 11px 8px}
+.node .grip{color:var(--faint);cursor:grab;letter-spacing:-2px}
+.node .ttl{font-weight:700;font-size:12.5px;flex:1;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.node .chip{font-size:9.5px;color:var(--faint);border:1px solid var(--edge);
+  border-radius:4px;padding:1px 6px}
+.node .chip.live{color:var(--ok);border-color:#3f6a2c;background:#1d2a15}
+/* Running, but no longer what is drawn. Neither "live" nor "draft" is true. */
+.node .chip.drift{color:#e8c46a;border-color:#6a5320;background:#2a2413}
+.node .dots{color:var(--faint);cursor:pointer;padding:0 2px}
+.node .dots:hover{color:var(--bad)}
+.node .badge{margin:0 11px 9px;display:inline-block;font-size:9.5px;
+  letter-spacing:.1em;color:var(--accent);border:1px solid #4a3358;
+  background:#241a2e;border-radius:4px;padding:2px 7px}
+.node .bd{padding:0 11px 12px}
+.node .rt{display:flex;align-items:center;gap:9px;font-size:12.5px}
+.node .rt i{width:3px;height:16px;border-radius:2px;display:block}
+.node.cc .rt i{background:var(--cc)} .node.cx .rt i{background:var(--cx)}
+.node .mo{color:var(--dim);font-size:11.5px;margin:5px 0 0 12px}
+.port{position:absolute;width:11px;height:11px;border-radius:50%;
+  background:var(--panel);border:1.5px solid var(--faint)}
+.node.sel .port{border-color:var(--accent)}
+.port.l{left:-6px;top:calc(50% - 5px)} .port.r{right:-6px;top:calc(50% - 5px)}
+.port.b{left:calc(50% - 5px);bottom:-6px}
+.port.t{left:calc(50% - 5px);top:-6px}
+svg.wires{position:absolute;inset:0;pointer-events:none;overflow:visible}
+#zoom{position:absolute;left:16px;bottom:16px;display:flex;gap:2px;
+  align-items:center;background:var(--panel);border:1px solid var(--edge);
+  border-radius:9px;padding:4px}
+#zoom div{padding:5px 10px;cursor:pointer;color:var(--dim);font-size:12px}
+#zoom div:hover{color:var(--accent)}
+#zoom .pc{color:var(--ink);min-width:52px;text-align:center;cursor:default}
+#addagent{position:absolute;right:16px;bottom:16px;border-style:dashed;
+  background:var(--panel)}
+
+/* --- inspector --------------------------------------------------------- */
+aside{border-left:1px solid var(--edge);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0}
+#itabs{display:flex;border-bottom:1px solid var(--edge);flex:0 0 auto}
+#itabs div{padding:12px 15px;cursor:pointer;color:var(--dim);font-size:11px;
+  letter-spacing:.11em;text-transform:uppercase;
+  border-bottom:2px solid transparent}
+#itabs div.on{color:var(--ink);border-bottom-color:var(--accent)}
+#itabs .n{margin-left:6px;color:var(--faint);border:1px solid var(--edge);
+  border-radius:4px;padding:0 5px;font-size:10px}
+.pane{padding:16px;overflow-y:auto;flex:1;min-height:0}
+.pane h4{margin:0 0 16px;font-size:15px}
+.fr{display:grid;grid-template-columns:118px 1fr;align-items:center;
+  gap:10px;margin-bottom:11px}
+.expander{display:flex;align-items:center;justify-content:space-between;
+  border:1px solid var(--edge);border-radius:7px;padding:11px 12px;
+  cursor:pointer;margin-top:14px;color:var(--ink)}
+.expander:hover{border-color:var(--accent)}
+#instr{margin-top:8px;min-height:96px;resize:vertical;line-height:1.6}
+.row2{display:flex;gap:7px;margin-top:10px}
+.row2 select{flex:1;min-width:0}
+.row2 button{flex:0 0 auto}
+h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
+  text-transform:uppercase;margin:24px 0 10px;font-weight:400}
+.rig{border:1px solid var(--edge);border-radius:8px;padding:10px;
+  margin-bottom:8px;background:var(--panel2)}
+.rig .top{display:flex;align-items:center;gap:8px}
+.rig .d{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.rig.up .d{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+.rig .nm{font-weight:700;font-size:12.5px}
+.rig .cnt{color:var(--faint);font-size:11px;margin-left:auto}
+.rig button{padding:3px 9px;font-size:11px}
+.pill{font-size:9.5px;padding:1px 6px;border-radius:4px;border:1px solid;
+  letter-spacing:.05em}
+.pill.up{color:var(--ok);border-color:#3f6a2c;background:#1d2a15}
+.pill.down{color:var(--faint);border-color:var(--edge)}
+.w{color:var(--dim);font-size:11px;margin-top:7px;line-height:1.7}
+.w .off{color:var(--faint)}
+
+/* --- status ------------------------------------------------------------ */
+#log{white-space:pre-wrap;font-size:11px;color:var(--dim);flex:0 0 auto;
+  border-top:1px solid var(--edge);padding:7px 14px;max-height:104px;
+  overflow-y:auto;background:#0b090e;display:none}
+#log.on{display:block}
+#log b{color:var(--faint);font-weight:400}
+#log .err{color:var(--bad)} #log .ok{color:var(--ok)}
+#status{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--panel);
+  border-top:1px solid var(--edge);color:var(--dim);font-size:11.5px;
+  padding:7px 16px;flex:0 0 auto}
+#status .sep{color:var(--edge)}
+#status .r{margin-left:auto;display:flex;align-items:center;gap:12px}
+#go{background:var(--accent);color:#0e0b11;font-weight:700;
+  border-color:var(--accent);padding:7px 16px}
+#go:hover{background:#d7a8f0;color:#0e0b11}
+#host{color:var(--faint)}
+</style>
+
+<div id="top">
+  <div id="brand">NXB STUDIO</div>
+  <div id="tabs"></div>
+  <div id="newtab" title="new rig (⌘T)">+</div>
+  <div id="conn"><span class="d"></span><span id="connt">localhost · connected</span></div>
+  <div id="nav">
+    <div class="nv on" data-v="compose">Compose</div>
+    <div class="nv" data-v="live">Live rigs</div>
+    <div class="nv" data-v="activity">Activity</div>
+  </div>
+  <div id="usebar" title="click for the full breakdown"></div>
+  <div id="topr">
+    <div class="ic" id="btnfind" title="find a node">⌕</div>
+    <div class="ic" id="btnlog" title="activity log">☰</div>
+  </div>
+</div>
+
+<div id="bar">
+  <div class="f"><label>rig</label><input id="session" type="text" size="14"></div>
+  <div class="f"><label>dir</label><input id="dir" type="text" size="22"></div>
+  <div class="seg" id="viewseg">
+    <div class="on" data-m="topology">Topology</div>
+    <div data-m="panes">Pane preview</div>
+  </div>
+  <select id="layout" style="width:auto"
+    title="This decides the tmux pane arrangement. Node positions on the canvas are for your head only.">
+    <option>main-horizontal</option><option>main-vertical</option>
+    <option>tiled</option><option>even-horizontal</option>
+    <option>even-vertical</option>
+  </select>
+  <button id="autolayout">⇹ Auto layout</button>
+</div>
+
+<div id="body">
+  <div id="rail">
+    <h3>components</h3>
+    <div class="comp" draggable="true" data-role="orchestrator" data-rt="codex">
+      <span class="gl">◍</span><div><b>Orchestrator</b><small>orchestrator</small></div>
+    </div>
+    <div class="comp" draggable="true" data-role="worker" data-rt="codex">
+      <span class="gl">&gt;_</span><div><b>Worker</b><small>worker</small></div>
+    </div>
+    <div class="prov cc" draggable="true" data-role="worker" data-rt="claude_code">
+      <i></i>Claude</div>
+    <div class="prov cx" draggable="true" data-role="worker" data-rt="codex">
+      <i></i>Codex</div>
+    <p>Drag onto the canvas, or click to add. Drop a provider onto an existing
+       node to switch it.</p>
+    <p>Drag empty canvas to pan · scroll to pan · ⌘-scroll to zoom ·
+       space-drag anywhere · ⤢ fits everything · drag a divider to resize,
+       double-click it to reset.</p>
+  </div>
+
+  <div class="split" data-for="rail"></div>
+  <div id="stage">
+    <div id="world"><svg class="wires"></svg></div>
+    <div id="empty">drag a component in from the left<br>to start composing this rig</div>
+    <div id="zoom">
+      <div id="zout">−</div><div class="pc" id="zpc">100%</div><div id="zin">+</div>
+      <div id="zfit" title="fit">⤢</div><div id="zreset" title="reset">◎</div>
+    </div>
+    <button id="addagent">+ Add agent</button>
+  </div>
+
+  <div class="split" data-for="inspector"></div>
+  <aside>
+    <div id="itabs">
+      <div class="on" data-p="inspector">Inspector</div>
+      <div data-p="rigs">Live rigs<span class="n" id="rign">0</span></div>
+      <div data-p="usage">Usage</div>
+    </div>
+    <div class="pane" id="pinspector"></div>
+    <div class="pane" id="prigs" hidden></div>
+    <div class="pane" id="pusage" hidden></div>
+  </aside>
+</div>
+
+<div id="log"></div>
+<div id="status">
+  <span id="stL"></span>
+  <span class="sep">│</span>
+  <span id="stM"></span>
+  <span class="r">
+    <button id="go">Bring it to life</button>
+    <span id="host"></span>
+  </span>
+</div>
+<script>
+"use strict";
+const TOKEN = "__NXB_TOKEN__";
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const stage = $("#stage"), world = $("#world"), wires = document.querySelector("svg.wires");
+
+/* Nothing fails silently: a page that renders an empty board and says nothing
+   is indistinguishable from an empty design. */
+function log(msg, cls){
+  const at = new Date().toLocaleTimeString();
+  $("#log").insertAdjacentHTML("afterbegin",
+    `<div class="${cls||""}"><b>${at}</b>  ${msg}</div>`);
+  if(cls === "err") $("#log").classList.add("on");
+}
+window.onerror = (m,s,l) => log(`page error: ${m} (line ${l})`,"err");
+window.onunhandledrejection = e => log(`page error: ${e.reason}`,"err");
+
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({headers:{
+    "X-NXB-Token": TOKEN, "Content-Type":"application/json"}}, opts||{}));
+  const b = await r.json().catch(()=>({error:"unreadable reply"}));
+  if(!r.ok) throw new Error(b.error || b.detail || JSON.stringify(b));
+  return b;
+}
+
+/* ---- model menus. Only what each runtime will actually accept. ---------- */
+/* Fetched from the server, which reads them from each runtime's own config
+   rather than from anyone's memory. A hardcoded list here shipped `gpt-5.6`,
+   which the API rejected live with "model is not supported". These are
+   SUGGESTIONS on a free-text field: a suggestion I get wrong costs a retype,
+   a closed picker I get wrong blocks a value that would have worked. */
+let CATALOG = {claude_code:{models:[],efforts:[]}, codex:{models:[],efforts:[]},
+               _configured:{claude_code:{}, codex:{}}};
+/* "(runtime default)" is a word, not an answer. An operator cannot decide
+   whether to override a default he cannot see, so the placeholder names the
+   model each runtime is actually configured with. */
+const dflt = (rt, key) => (CATALOG._configured?.[rt]?.[key])
+  ? `default: ${CATALOG._configured[rt][key]}` : "runtime default";
+const PRETTY = {claude_code:"Claude", codex:"Codex"};
+
+/* ---- tabs --------------------------------------------------------------- */
+const STORE = "nxb.studio.v2";
+let tabs = [], active = 0, seq = 0, standing = {}, sel = null;
+/* VIEW STATE, per tab and persisted. Without a pan, a node dragged past the
+   right edge was simply unreachable: zoom was the only control and it is
+   anchored at the origin, so zooming out did not always bring it back. */
+let zoom = 1, panX = 0, panY = 0;
+function view(){
+  const t = tab();
+  t.view = t.view || {zoom:1, x:0, y:0};
+  return t.view;
+}
+function loadView(){ const v = view(); zoom = v.zoom; panX = v.x; panY = v.y; }
+function saveView(){ const v = view(); v.zoom = zoom; v.x = panX; v.y = panY;
+  save(); }
+
+const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", nodes:[]});
+
+/* ---- undo. Snapshots of the whole draft, taken BEFORE each discrete act.
+   Text fields snapshot on FOCUS rather than per keystroke: an undo that walks
+   back one character at a time is not an undo, it is a typing history. */
+let past = [], future = [];
+const snap = () => JSON.stringify({tabs, active});
+function mark(){
+  past.push(snap());
+  if(past.length > 80) past.shift();
+  future.length = 0;
+}
+function restore(json){
+  const s = JSON.parse(json);
+  tabs = s.tabs; active = Math.min(s.active, tabs.length-1);
+  if(!tabs.find(t=>t.nodes.some(n=>n.id===sel))) sel = null;
+  save(); paint();
+}
+function undo(){
+  if(!past.length) return log("nothing to undo");
+  future.push(snap()); restore(past.pop());
+}
+function redo(){
+  if(!future.length) return log("nothing to redo");
+  past.push(snap()); restore(future.pop());
+}
+function load(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(STORE) || "null");
+    if(raw && Array.isArray(raw.tabs) && raw.tabs.length){
+      tabs = raw.tabs; active = Math.min(raw.active||0, tabs.length-1);
+      seq = Math.max(0, ...tabs.flatMap(t=>t.nodes.map(n=>n.id)));
+      return;
+    }
+  }catch(e){ /* a corrupt draft must not stop the page loading */ }
+  tabs = [blank(1)];
+}
+const save = () => { try{ localStorage.setItem(STORE,
+  JSON.stringify({tabs,active})); }catch(e){} };
+const tab = () => tabs[active];
+
+function drawTabs(){
+  const el = $("#tabs"); el.innerHTML = "";
+  tabs.forEach((t,i)=>{
+    const d = document.createElement("div");
+    d.className = "tab"+(i===active?" on":"")+(standing[t.name]?" live":"");
+    d.innerHTML = `<span class="st"></span><span class="lbl">${t.name}</span>
+                   <span class="cl" title="close">×</span>`;
+    d.onclick = e => {
+      if(e.target.classList.contains("cl")){
+        e.stopPropagation();
+        if(tabs.length===1) return log("the last tab stays","err");
+        tabs.splice(i,1); active = Math.max(0, active-(i<=active?1:0));
+      } else { active = i; sel = null; }
+      loadView(); save(); paint();
+    };
+    el.appendChild(d);
+  });
+  $("#newtab").onclick = () => {
+    tabs.push(blank(tabs.length+1)); active = tabs.length-1; sel = null;
+    loadView(); save(); paint();
+  };
+}
+
+/* ---- nodes -------------------------------------------------------------- */
+function defaultName(role, runtime){
+  const t = tab();
+  if(role === "orchestrator") return "Orchestrator";
+  const pre = runtime === "claude_code" ? "CC" : "CX";
+  let i = 1;
+  while(t.nodes.some(n=>n.name === `${pre} Worker ${i}`)) i++;
+  return `${pre} Worker ${i}`;
+}
+function add(role, runtime, x, y){
+  const t = tab();
+  if(role === "orchestrator" && t.nodes.some(n=>n.role === "orchestrator"))
+    return log("a rig has at most one orchestrator","err");
+  mark();
+  const n = {id:++seq, role, runtime, name:defaultName(role,runtime),
+             model:"", effort:"", dir:"", instructions:"",
+             x: Math.round(x ?? 320), y: Math.round(y ?? 200)};
+  t.nodes.push(n); sel = n.id; save(); paint();
+}
+const node = id => tab().nodes.find(n=>n.id===id);
+
+/* TWO PAINTS, and the split is the whole fix for STUDIO-10.
+   `inspector()` rebuilds its panel with innerHTML, so calling it from an
+   `oninput` handler destroys the very field being typed into: focus is lost
+   and the datalist closes after a single character, which made Model and
+   Reasoning impossible to fill in. Text fields repaint the CANVAS only.
+   Selects still do a full paint, because changing the provider has to
+   re-render the panel to swap the model suggestions. */
+function paint(){ paintCanvas(); inspector(); }
+
+function paintCanvas(){
+  const t = tab();
+  $("#session").value = t.name; $("#dir").value = t.dir;
+  $("#layout").value = t.layout;
+  $$("#world .node").forEach(e=>e.remove());
+  /* A node is live because the pane it was DEPLOYED AS is running, never
+     because its current label happens to match. Renaming a drawn node used to
+     flip it to "draft" while its pane carried on working, which is a diagram
+     lying about the machine. `deployed` is stamped at stand-up. */
+  const liveNames = new Set((standing[t.name]?.panes||[])
+    .filter(p=>p.alive).map(p=>p.name));
+  t.nodes.forEach(n=>{
+    const el = document.createElement("div");
+    el.className = "node "+(n.runtime==="claude_code"?"cc":"cx")
+                  +(sel===n.id?" sel":"");
+    el.style.left = n.x+"px"; el.style.top = n.y+"px";
+    const live = n.deployed && liveNames.has(n.deployed);
+    const drifted = live && n.deployed !== `${t.name} ${n.name}`;
+    el.innerHTML =
+      `<div class="hd"><span class="grip">⠿</span>
+         <span class="ttl">${n.name}</span>
+         <span class="chip${drifted?" drift":live?" live":""}"
+               title="${drifted?`running as ${n.deployed}; rebuild to apply the rename`:""}"
+         >${drifted?"edited":live?"live":"draft"}</span>
+         <span class="dots" title="remove">⋮</span></div>
+       ${n.role==="orchestrator"?'<div class="badge">ORCHESTRATOR</div>':""}
+       <div class="bd"><div class="rt"><i></i>${PRETTY[n.runtime]}</div>
+         <div class="mo">${n.model || CATALOG._configured?.[n.runtime]?.model
+            || "default model"}${
+            n.effort ? " · "+n.effort
+            : CATALOG._configured?.[n.runtime]?.effort
+              ? " · "+CATALOG._configured[n.runtime].effort : ""}${
+            n.model||n.effort ? "" : "  (default)"}</div>
+       </div>
+       <span class="port l"></span><span class="port r"></span>
+       <span class="port t"></span><span class="port b"></span>`;
+    el.querySelector(".dots").onclick = e => {
+      e.stopPropagation(); mark();
+      t.nodes = t.nodes.filter(m=>m.id!==n.id);
+      if(sel===n.id) sel = null;
+      save(); paint();
+    };
+    el.onpointerdown = e => {
+      if(e.target.classList.contains("dots")) return;
+      sel = n.id; paint();
+      mark();
+      const box = stage.getBoundingClientRect();
+      const dx = (e.clientX-box.left-panX)/zoom - n.x;
+      const dy = (e.clientY-box.top-panY)/zoom - n.y;
+      const me = $$("#world .node").find(x=>x.style.left===n.x+"px" &&
+                                            x.style.top===n.y+"px") || el;
+      me.setPointerCapture(e.pointerId);
+      me.onpointermove = m => {
+        n.x = Math.max(0, Math.round((m.clientX-box.left-panX)/zoom - dx));
+        n.y = Math.max(0, Math.round((m.clientY-box.top-panY)/zoom - dy));
+        me.style.left = n.x+"px"; me.style.top = n.y+"px"; wire();
+      };
+      me.onpointerup = () => { me.onpointermove = null; me.onpointerup = null;
+        save(); };
+    };
+    world.appendChild(el);
+  });
+  $("#empty").hidden = t.nodes.length > 0;
+  world.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  $("#zpc").textContent = Math.round(zoom*100)+"%";
+  wire(); drawTabs(); status();
+}
+
+/* Orthogonal wires: a bus down from the orchestrator, then a branch to each
+   worker. Curves read as "data flows"; right angles read as a rack diagram,
+   which is what this is. */
+function wire(){
+  const t = tab(), o = t.nodes.find(n=>n.role==="orchestrator");
+  wires.innerHTML = "";
+  if(!o) return;
+  const kids = t.nodes.filter(n=>n.role!=="orchestrator");
+  if(!kids.length) return;
+  const ox = o.x+106, oy = o.y+118;
+  const busY = Math.min(...kids.map(k=>k.y)) - 46;
+  const path = [];
+  path.push(`M${ox},${oy} V${busY}`);
+  const xs = kids.map(k=>k.x+106);
+  path.push(`M${Math.min(...xs,ox)},${busY} H${Math.max(...xs,ox)}`);
+  kids.forEach(k => path.push(`M${k.x+106},${busY} V${k.y}`));
+  const p = document.createElementNS("http://www.w3.org/2000/svg","path");
+  p.setAttribute("d", path.join(" "));
+  p.setAttribute("stroke","#3d3149"); p.setAttribute("fill","none");
+  p.setAttribute("stroke-width","1.5");
+  wires.appendChild(p);
+}
+
+/* ---- inspector ---------------------------------------------------------- */
+function field(lbl, html){ return `<div class="fr"><label>${lbl}</label>${html}</div>`; }
+function datalist(id, list){
+  return `<datalist id="${id}">`
+    + list.map(o=>`<option value="${o}">`).join("") + `</datalist>`;
+}
+function inspector(){
+  const n = sel ? node(sel) : null, box = $("#pinspector");
+  if(!n){
+    box.innerHTML = `<p style="color:var(--faint);font-size:12px;line-height:1.8">
+      Select a node to edit it.<br><br>Its name, provider, model, reasoning
+      effort and working directory all reach the real runtime — nothing here
+      is decoration.</p>`;
+    return;
+  }
+  box.innerHTML = `<h4>${n.name}</h4>
+    ${field("Name", `<input id="fName" value="${n.name.replace(/"/g,"&quot;")}">`)}
+    ${field("Role", `<select id="fRole">
+      <option value="worker"${n.role==="worker"?" selected":""}>Worker</option>
+      <option value="orchestrator"${n.role==="orchestrator"?" selected":""}>Orchestrator</option>
+      </select>`)}
+    ${field("Provider", `<select id="fRt">
+      <option value="claude_code"${n.runtime==="claude_code"?" selected":""}>Claude</option>
+      <option value="codex"${n.runtime==="codex"?" selected":""}>Codex</option>
+      </select>`)}
+    ${field("Model", `<input id="fModel" list="dlM"
+        placeholder="${dflt(n.runtime,"model")}"
+        value="${n.model||""}">` + datalist("dlM", CATALOG[n.runtime].models))}
+    ${field("Reasoning", `<input id="fEffort" list="dlE"
+        placeholder="${dflt(n.runtime,"effort")}"
+        value="${n.effort||""}">` + datalist("dlE", CATALOG[n.runtime].efforts))}
+    ${field("Directory", `<input id="fDir" placeholder="(the rig's dir)" value="${n.dir||""}">`)}
+    <div class="expander" id="fExp"><span>Role / startup instructions</span><span>›</span></div>
+    <div id="roleBox" hidden>
+      <div class="row2">
+        <select id="pPick"><option value="">— apply a saved persona —</option></select>
+        <button id="pSave" title="save this text as a reusable persona">save</button>
+      </div>
+      <textarea id="instr" placeholder="e.g. Act as an adversarial auditor for audit Builder. Challenge every claim.">${n.instructions||""}</textarea>
+      <p class="hint" id="roleNote"></p>
+    </div>
+    <h5>running locally</h5><div id="mini"></div>`;
+  // TEXT: never rebuild the panel underneath the cursor.
+  const text = (id, key) => {
+    const el = $("#"+id); if(!el) return;
+    el.onfocus = mark;                 // one undo per edit, not per keystroke
+    el.oninput = () => {
+      n[key] = el.value; save(); paintCanvas();
+      if(key === "name") $("#pinspector").querySelector("h4").textContent =
+        el.value || "(unnamed)";
+    };
+  };
+  // SELECT: committed in one act, and provider must re-render the panel so
+  // the model suggestions match the runtime you just chose.
+  const choice = (id, key) => {
+    const el = $("#"+id); if(!el) return;
+    el.onchange = () => { mark(); n[key] = el.value; save(); paint(); };
+  };
+  text("fName","name"); text("fModel","model");
+  text("fEffort","effort"); text("fDir","dir");
+  choice("fRole","role"); choice("fRt","runtime");
+  const ta = $("#instr"), roleBox = $("#roleBox");
+  ta.onfocus = mark;
+  ta.oninput = () => { n.instructions = ta.value; save(); roleNote(n); };
+  $("#fExp").onclick = () => { roleBox.hidden = !roleBox.hidden; };
+  if(n.instructions) roleBox.hidden = false;
+  // The library, offered where the role is written.
+  const pick = $("#pPick");
+  PERSONAS.forEach(p => pick.insertAdjacentHTML("beforeend",
+    `<option value="${p.name.replace(/"/g,"&quot;")}">${p.name}</option>`));
+  pick.onchange = () => {
+    const p = PERSONAS.find(x=>x.name===pick.value); if(!p) return;
+    mark(); n.instructions = p.body; save(); inspector();
+    log(`applied persona <b>${p.name}</b>`,"ok");
+  };
+  $("#pSave").onclick = () => savePersona(n);
+  roleNote(n);
+  rigList($("#mini"), true);
+}
+
+/* ---- personas: a library that grows by being used ------------------------
+   Rohan's design. A role written once is offered back next time, so the
+   library accumulates from real use instead of being curated up front. They
+   are markdown files on disk, not rows in this page's storage, because they
+   are prose he should be able to open, edit and keep. */
+let PERSONAS = [];
+async function loadPersonas(){
+  try{ PERSONAS = (await api("/api/personas")).personas || []; }
+  catch(e){ PERSONAS = []; }
+}
+const same = (a,b) => (a||"").split(/\s+/).join(" ").trim()
+                   === (b||"").split(/\s+/).join(" ").trim();
+function roleNote(n){
+  const el = $("#roleNote"); if(!el) return;
+  const hit = PERSONAS.find(p=>same(p.body, n.instructions));
+  const bound = n.runtime === "claude_code"
+    ? "Bound in this agent's system prompt at launch, so a later message "
+      + "cannot argue it away."
+    : "Typed as a standing rule when the pane comes up. Codex has no way to "
+      + "bind one at launch, so this is the weaker form.";
+  el.innerHTML = (hit ? `<b>${hit.name}</b> — saved. ` : "")
+    + (n.instructions ? bound : "");
+}
+async function savePersona(n){
+  const body = (n.instructions||"").trim();
+  if(!body) return log("nothing to save: write the role first","err");
+  if(PERSONAS.find(p=>same(p.body, body)))
+    return log("already in your library","ok");
+  const name = prompt("Name this persona so you can reuse it:",
+    body.split(/[.\n]/)[0].slice(0,40));
+  if(!name) return;
+  try{
+    await api("/api/personas/save",{method:"POST",
+      body:JSON.stringify({name, body})});
+    await loadPersonas(); inspector();
+    log(`saved persona <b>${name}</b> — it will be offered next time`,"ok");
+  }catch(e){ log(e.message,"err"); }
+}
+/* OFFER, never nag: after a rig goes up, any role that is not yet in the
+   library is offered once. A prompt that fires on something already saved is
+   noise, and noise is how a prompt gets dismissed without being read. */
+async function offerToSave(nodes){
+  await loadPersonas();
+  for(const n of nodes){
+    const body = (n.instructions||"").trim();
+    if(!body || PERSONAS.find(p=>same(p.body, body))) continue;
+    log(`<b>${n.name}</b> ran with a role that is not in your library. `
+        + `Select it and press save under Role to keep it.`);
+  }
+}
+
+/* ---- rigs --------------------------------------------------------------- */
+let rigs = [];
+function rigList(box, compact){
+  box.innerHTML = rigs.length ? "" : `<p style="color:var(--faint);font-size:11px">none yet.</p>`;
+  rigs.forEach(r=>{
+    const el = document.createElement("div");
+    el.className = "rig"+(r.standing?" up":"");
+    const n = r.panes.length;
+    el.innerHTML = `<div class="top"><span class="d"></span>
+      <span class="nm">${r.session}</span>
+      <span class="pill ${r.standing?"up":"down"}">${r.standing?"standing":"down"}</span>
+      <span class="cnt">${n} agent${n===1?"":"s"}</span>
+      <button class="open" title="open this rig in a tab">open</button>
+      ${r.standing?`<button class="att">attach</button>`:""}
+      ${r.standing?`<button class="kill">×</button>`
+                  :`<button class="forget" title="remove this record">×</button>`}</div>
+      ${compact?"":`<div class="w">${r.panes.map(p=>
+        `<span class="${p.alive?"":"off"}">${p.alive?"●":"○"} ${p.name}</span>`
+        ).join("<br>")}</div>`}`;
+    /* IMPORT A REAL RIG INTO A TAB. Without this a tab was a drawing with no
+       way back from the machine: tear a rig down from here and its tab kept
+       claiming panes that no longer existed, and a rig stood up from the CLI
+       could not be edited at all. */
+    el.querySelector(".open").onclick = () => {
+      const existing = tabs.findIndex(t=>t.name === r.session);
+      mark();
+      const nodes = r.panes.map((p,i)=>({
+        id: ++seq, role: p.role || "worker", runtime: p.runtime,
+        // The pane carries the rig prefix; the drawing does not.
+        name: String(p.name).startsWith(r.session+" ")
+              ? String(p.name).slice(r.session.length+1) : p.name,
+        model: p.model||"", effort: p.effort||"", dir:"", instructions:"",
+        deployed: p.name,
+        x: 60 + (p.role==="orchestrator" ? 0 : i-1)*250,
+        y: p.role==="orchestrator" ? 60 : 300}));
+      const t = {name:r.session, dir:"~", layout:"main-horizontal", nodes};
+      if(existing >= 0){ tabs[existing] = t; active = existing; }
+      else { tabs.push(t); active = tabs.length-1; }
+      sel = null; save(); paint();
+      log(`opened <b>${r.session}</b> in a tab`,"ok");
+    };
+    const fg = el.querySelector(".forget");
+    if(fg) fg.onclick = async () => {
+      // Only ever offered on a rig that is DOWN, and the server refuses a
+      // standing one regardless of what this page believes.
+      try{ await api("/api/rig/forget",{method:"POST",
+        body:JSON.stringify({session:r.session})});
+        log(`forgot the record for <b>${r.session}</b>`,"ok");
+      }catch(e){ log(e.message,"err"); }
+      refresh();
+    };
+    const att = el.querySelector(".att");
+    if(att) att.onclick = async () => {
+      await navigator.clipboard.writeText(`tmux attach -t ${r.session}`)
+        .catch(()=>{});
+      log(`copied <b>tmux attach -t ${r.session}</b> — paste it in a terminal`,
+          "ok");
+    };
+    const k = el.querySelector(".kill");
+    if(k) k.onclick = async () => {
+      // Irreversible, and the panes may be mid-task. The tmux session and
+      // every runtime in it go, and nothing can bring back what they held.
+      if(!confirm(`Tear down "${r.session}"? `
+        + `${r.panes.length} agents are running and their context is lost.`))
+        return;
+      k.disabled = true;
+      try{ await api("/api/rig/down",{method:"POST",
+        body:JSON.stringify({session:r.session})});
+        // The drawing outlives the rig; its live stamps must not.
+        const t = tabs.find(x=>x.name === r.session);
+        if(t){ t.nodes.forEach(n=>delete n.deployed); save(); }
+        log(`tore down <b>${r.session}</b>`,"ok");
+      }catch(e){ log(e.message,"err"); }
+      refresh();
+    };
+    box.appendChild(el);
+  });
+}
+async function refresh(){
+  try{
+    const s = await api("/api/state");
+    rigs = s.rigs; standing = {};
+    rigs.forEach(r=>{ if(r.standing) standing[r.session] = r; });
+    $("#rign").textContent = rigs.filter(r=>r.standing).length;
+    rigList($("#prigs"), false);
+    $("#conn").classList.remove("off");
+    $("#connt").textContent = "localhost · connected";
+    paint();
+  }catch(e){
+    $("#conn").classList.add("off");
+    $("#connt").textContent = "localhost · unreachable";
+    log("state: "+e.message,"err");
+  }
+}
+
+/* ---- usage --------------------------------------------------------------
+   Two different KINDS of number, kept visually apart because conflating them
+   would mislead the decision this panel exists to inform:
+     a PERCENTAGE of a plan window, which only Codex records locally;
+     TOKEN COUNTS, which both runtimes record and which are not a percentage
+     of anything. And cache reads are shown separately from real input --
+     97.7% of Claude's all-time total is cache reads, so one combined number
+     would be an alarming figure that means almost nothing. */
+let USAGE = null;
+const K = n => n >= 1e9 ? (n/1e9).toFixed(2)+"B"
+             : n >= 1e6 ? (n/1e6).toFixed(1)+"M"
+             : n >= 1e3 ? (n/1e3).toFixed(0)+"k" : String(n||0);
+function resetsIn(epoch){
+  if(!epoch) return "";
+  const s = epoch*1000 - Date.now();
+  if(s <= 0) return "resets now";
+  const d = Math.floor(s/86400000), h = Math.floor(s%86400000/3600000);
+  return d ? `resets in ${d}d ${h}h` : `resets in ${h}h`;
+}
+function claudeAge(){
+  const c = (USAGE?.limits||{}).claude_code;
+  if(!c || !c.read_at) return "";
+  const m = Math.round((Date.now()/1000 - c.read_at)/60);
+  return m < 1 ? "just now" : m < 60 ? `${m}m ago`
+       : `${Math.round(m/60)}h ago`;
+}
+function claudeBadge(){
+  const c = (USAGE?.limits||{}).claude_code;
+  if(!c || !c.windows)
+    return `claude <span class="none">unread</span>`
+         + ` <span class="ask" id="askCC">check</span>`;
+  // The WEEKLY figure is the one that shapes a design decision; the session
+  // window is shown in the panel.
+  const w = c.windows["week (all models)"] || Object.values(c.windows)[0];
+  return `claude ${gauge(w.used_percent)}<b>${w.used_percent}%</b>`
+       + ` <span class="none">${claudeAge()}</span>`
+       + ` <span class="ask" id="askCC">↻</span>`;
+}
+function gauge(pct){
+  const cls = pct >= 85 ? "hot" : pct >= 60 ? "warn" : "";
+  return `<span class="gauge ${cls}"><i style="width:${Math.min(100,pct)}%"></i></span>`;
+}
+async function usage(){
+  try{ USAGE = await api("/api/usage"); }catch(e){ return; }
+  const t = USAGE.tokens || {}, lim = (USAGE.limits||{}).codex;
+  const cx = lim && lim.primary ? lim.primary.used_percent : null;
+  // The scan runs on a worker thread; the plan percentage is available
+  // immediately either way, so only the token half waits.
+  const counting = USAGE.computing ? ` <span class="none">counting…</span>` : "";
+  $("#usebar").innerHTML =
+    (cx === null
+      ? `<span class="none">codex usage unread</span>`
+      : `codex ${gauge(cx)}<b>${cx}%</b> <span class="none">${
+          resetsIn(lim.primary.resets_at)}</span>`)
+    + ` <span class="none">│</span> ${claudeBadge()}`
+    + ` <span class="none">│</span> today `
+    + `<b>${K((t.claude_code?.today?.output||0)+(t.codex?.today?.output||0))}</b> out`
+    + counting;
+  paintUsagePane();
+  const ask = $("#askCC");
+  if(ask) ask.onclick = async (e) => {
+    e.stopPropagation();
+    ask.textContent = "…";
+    try{
+      await api("/api/usage/claude", {method:"POST", body:"{}"});
+      await usage();
+      log("claude usage refreshed (cost: one Claude turn)","ok");
+    }catch(err){ log("claude usage: "+err.message,"err"); await usage(); }
+  };
+}
+function paintUsagePane(){
+  if(!USAGE) return;
+  const t = USAGE.tokens || {}, lim = (USAGE.limits||{}).codex;
+  const rows = (b) => `
+    <div class="fr"><label>output</label><span>${K(b.output)}</span></div>
+    <div class="fr"><label>input</label><span>${K(b.input)}</span></div>
+    <div class="fr"><label>cached read</label><span>${K(b.cache_read)}</span></div>`;
+  const block = (title, rt) => {
+    const b = t[rt]; if(!b) return "";
+    return `<h5>${title}</h5>
+      <div class="rig"><div class="top"><span class="nm">today</span></div>
+        ${rows(b.today)}</div>
+      <div class="rig"><div class="top"><span class="nm">last 7 days</span></div>
+        ${rows(b.week)}</div>
+      <div class="rig"><div class="top"><span class="nm">all time</span></div>
+        ${rows(b.all)}</div>`;
+  };
+  $("#pusage").innerHTML =
+    `<h4>Plan windows</h4>` +
+    (lim && lim.primary
+      ? `<div class="rig"><div class="top"><span class="nm">codex</span>
+           <span class="pill up">${lim.plan_type||"plan"}</span>
+           <span class="cnt">${lim.primary.used_percent}% used</span></div>
+           <div class="w">${gauge(lim.primary.used_percent)}
+           ${Math.round((lim.primary.window_minutes||0)/1440)}-day window ·
+           ${resetsIn(lim.primary.resets_at)}</div></div>`
+      : `<p class="hint">No Codex reading found.</p>`) +
+    (() => {
+      const c = (USAGE.limits||{}).claude_code;
+      if(!c || !c.windows) return `<div class="rig"><div class="top">
+        <span class="nm">claude</span>
+        <span class="pill down">unread</span></div>
+        <div class="w">${(USAGE.limits||{}).claude_code_reason||""}</div></div>`;
+      return `<div class="rig"><div class="top"><span class="nm">claude</span>
+        <span class="cnt">as of ${claudeAge()}</span></div>
+        ${Object.entries(c.windows).map(([k,v])=>`
+          <div class="w">${gauge(v.used_percent)}<b>${v.used_percent}%</b>
+          ${k}${v.resets?` · resets ${v.resets}`:""}</div>`).join("")}
+        </div>`;
+    })() +
+    block("claude tokens", "claude_code") + block("codex tokens", "codex") +
+    `<p class="hint">Cache reads are counted apart from input on purpose:
+     they are the bulk of the raw total and they are not the same cost.
+     Tokens are not converted to money, because consumption here may be plan
+     quota rather than per-token billing.</p>`;
+}
+
+/* ---- status ------------------------------------------------------------- */
+function status(){
+  const t = tab(), n = t.nodes.length;
+  const o = t.nodes.filter(x=>x.role==="orchestrator").length;
+  $("#stL").textContent = `[${t.name}] ${n} pane${n===1?"":"s"} · ${t.layout} · ${t.dir}`;
+  $("#stM").textContent = `${o} orchestrator · ${n-o} worker${n-o===1?"":"s"}`;
+  $("#go").textContent = standing[t.name] ? "Rebuild" : "Bring it to life";
+  $("#host").textContent = location.host;
+}
+
+/* ---- palette, drag and drop -------------------------------------------- */
+$$(".comp,.prov").forEach(c=>{
+  c.addEventListener("dragstart", e=>{
+    e.dataTransfer.setData("text/plain", JSON.stringify(
+      {role:c.dataset.role, rt:c.dataset.rt}));
+    e.dataTransfer.effectAllowed = "copy";
+  });
+  c.onclick = () => add(c.dataset.role, c.dataset.rt);
+});
+stage.addEventListener("dragover", e=>{ e.preventDefault();
+  e.dataTransfer.dropEffect="copy"; stage.classList.add("over"); });
+stage.addEventListener("dragleave", ()=>stage.classList.remove("over"));
+stage.addEventListener("drop", e=>{
+  e.preventDefault(); stage.classList.remove("over");
+  let spec; try{ spec = JSON.parse(e.dataTransfer.getData("text/plain")); }
+  catch(err){ return; }
+  const box = stage.getBoundingClientRect();
+  const x = (e.clientX-box.left-panX)/zoom - 106;
+  const y = (e.clientY-box.top-panY)/zoom - 40;
+  // Dropping a PROVIDER onto a node switches that node's runtime, which is
+  // what the rail's hint promises.
+  const hit = tab().nodes.find(n=>x+106>=n.x && x+106<=n.x+212 &&
+                                  y+40>=n.y && y+40<=n.y+120);
+  if(hit && spec.role === "worker" &&
+     (e.target.closest(".node") || hit)){
+    const wasProvider = spec.rt !== hit.runtime;
+    if(wasProvider){ hit.runtime = spec.rt; sel = hit.id; save(); paint();
+      return log(`${hit.name} now runs ${PRETTY[spec.rt]}`,"ok"); }
+  }
+  add(spec.role, spec.rt, x, y);
+});
+/* PAN. Dragging empty canvas moves the view; a click that never moved still
+   deselects, so the two gestures do not fight. Space+drag works over nodes
+   too, for when the canvas is full. */
+let panning = null;
+stage.addEventListener("pointerdown", e => {
+  const onNode = e.target.closest(".node");
+  if(onNode && !spaceDown) return;
+  if(e.target.closest("#zoom") || e.target.closest("#addagent")) return;
+  panning = {x:e.clientX, y:e.clientY, ox:panX, oy:panY, moved:false};
+  stage.setPointerCapture(e.pointerId);
+  stage.style.cursor = "grabbing";
+});
+stage.addEventListener("pointermove", e => {
+  if(!panning) return;
+  const dx = e.clientX-panning.x, dy = e.clientY-panning.y;
+  if(Math.abs(dx)+Math.abs(dy) > 3) panning.moved = true;
+  panX = panning.ox + dx; panY = panning.oy + dy;
+  world.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+});
+stage.addEventListener("pointerup", e => {
+  if(!panning) return;
+  const moved = panning.moved;
+  panning = null; stage.style.cursor = "";
+  if(moved) saveView();
+  else if(!e.target.closest(".node")){ sel = null; paint(); }
+});
+/* Trackpad: two-finger scroll pans, pinch or cmd+scroll zooms AT THE CURSOR
+   rather than at the origin, so zooming keeps what you are looking at. */
+stage.addEventListener("wheel", e => {
+  e.preventDefault();
+  if(e.ctrlKey || e.metaKey){
+    const box = stage.getBoundingClientRect();
+    const cx = e.clientX-box.left, cy = e.clientY-box.top;
+    const next = Math.min(2, Math.max(.3, zoom * (1 - e.deltaY/400)));
+    panX = cx - (cx-panX) * (next/zoom);
+    panY = cy - (cy-panY) * (next/zoom);
+    zoom = next;
+  } else {
+    panX -= e.deltaX; panY -= e.deltaY;
+  }
+  world.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  $("#zpc").textContent = Math.round(zoom*100)+"%";
+  clearTimeout(stage._wt); stage._wt = setTimeout(saveView, 250);
+}, {passive:false});
+
+let spaceDown = false;
+addEventListener("keydown", e => {
+  if(e.code === "Space" && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)){
+    spaceDown = true; stage.style.cursor = "grab"; e.preventDefault();
+  }
+});
+addEventListener("keyup", e => {
+  if(e.code === "Space"){ spaceDown = false; stage.style.cursor = ""; }
+});
+$("#addagent").onclick = () => add("worker","codex");
+
+/* ---- toolbar ------------------------------------------------------------ */
+$("#session").oninput = e => { tab().name = e.target.value.trim(); save(); paint(); };
+$("#dir").oninput = e => { tab().dir = e.target.value; save(); status(); };
+$("#layout").onchange = e => { tab().layout = e.target.value; save(); status(); };
+$("#autolayout").onclick = () => {
+  mark();
+  const t = tab(), o = t.nodes.find(n=>n.role==="orchestrator");
+  const kids = t.nodes.filter(n=>n.role!=="orchestrator");
+  const W = 250, total = Math.max(1, kids.length);
+  if(o){ o.x = Math.round((total-1)*W/2) + 60; o.y = 60; }
+  kids.forEach((k,i)=>{ k.x = 60 + i*W; k.y = 300; });
+  save(); paint(); log("laid out","ok");
+};
+$$("#viewseg div").forEach(d => d.onclick = () => {
+  $$("#viewseg div").forEach(x=>x.classList.remove("on"));
+  d.classList.add("on");
+  if(d.dataset.m === "panes"){
+    log("Pane preview is not built: the honest version has to render the tmux "
+        + "layout the server would actually produce, and inventing a picture "
+        + "of it would be a diagram that lies.","err");
+    $$("#viewseg div").forEach(x=>x.classList.remove("on"));
+    $("#viewseg div").classList.add("on");
+  }
+});
+$$(".nv").forEach(v => v.onclick = () => {
+  $$(".nv").forEach(x=>x.classList.remove("on")); v.classList.add("on");
+  if(v.dataset.v === "live"){ showPane("rigs"); }
+  else if(v.dataset.v === "activity"){ $("#log").classList.toggle("on", true); }
+  else { showPane("inspector"); }
+});
+$("#btnlog").onclick = () => $("#log").classList.toggle("on");
+$("#btnfind").onclick = () => {
+  const q = prompt("find a node by name"); if(!q) return;
+  const n = tab().nodes.find(x=>x.name.toLowerCase().includes(q.toLowerCase()));
+  if(n){ sel = n.id; paint(); } else log(`no node matching ${q}`,"err");
+};
+function showPane(which){
+  $$("#itabs div").forEach(d=>d.classList.toggle("on", d.dataset.p===which));
+  $("#pinspector").hidden = which !== "inspector";
+  $("#prigs").hidden = which !== "rigs";
+  $("#pusage").hidden = which !== "usage";
+}
+$$("#itabs div").forEach(d => d.onclick = () => showPane(d.dataset.p));
+
+/* ---- zoom --------------------------------------------------------------- */
+const setZoom = z => {
+  // Anchored on the middle of the stage, so the buttons behave like the
+  // pinch gesture rather than yanking the view to the origin.
+  const next = Math.min(2, Math.max(.3, z));
+  const cx = stage.clientWidth/2, cy = stage.clientHeight/2;
+  panX = cx - (cx-panX)*(next/zoom); panY = cy - (cy-panY)*(next/zoom);
+  zoom = next; saveView(); paint();
+};
+$("#zin").onclick = () => setZoom(zoom+.1);
+$("#zout").onclick = () => setZoom(zoom-.1);
+$("#zreset").onclick = () => { panX = panY = 0; zoom = 1; saveView(); paint(); };
+$("#zfit").onclick = () => {
+  const t = tab();
+  if(!t.nodes.length){ panX = panY = 0; zoom = 1; saveView(); return paint(); }
+  const xs = t.nodes.map(n=>n.x), ys = t.nodes.map(n=>n.y);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const w = Math.max(...xs)+212-minX, h = Math.max(...ys)+130-minY;
+  const pad = 40;
+  zoom = Math.min((stage.clientWidth-pad*2)/w,
+                  (stage.clientHeight-pad*2)/h, 1.4);
+  // FIT MUST PAN AS WELL AS SCALE. Scaling alone left off-screen nodes off
+  // screen, which is the whole complaint it exists to answer.
+  panX = pad - minX*zoom; panY = pad - minY*zoom;
+  saveView(); paint();
+};
+
+/* ---- bring it to life --------------------------------------------------- */
+$("#go").onclick = async () => {
+  const t = tab();
+  if(!t.nodes.length) return log("a fleet with no agents is not a fleet","err");
+  $("#go").disabled = true;
+  if(standing[t.name]){
+    if(!confirm(`"${t.name}" is standing. Rebuild tears it down first and `
+      + `every agent loses its context. Continue?`)){
+      $("#go").disabled = false; return;
+    }
+    log(`tearing <b>${t.name}</b> down first`);
+    try{ await api("/api/rig/down",{method:"POST",
+      body:JSON.stringify({session:t.name})}); }catch(e){ log(e.message,"err"); }
+  }
+  log(`standing up <b>${t.name}</b> in ${t.dir} … ~30s: every pane boots, is `
+      +`named and is enrolled before this returns.`);
+  try{
+    const r = await api("/api/rig/up",{method:"POST",body:JSON.stringify({
+      session:t.name, dir:t.dir, layout:t.layout,
+      agents: t.nodes.map(n=>({name:n.name, role:n.role, runtime:n.runtime,
+        model:n.model||null, effort:n.effort||null, dir:n.dir||null,
+        instructions:n.instructions||null}))})});
+    // Stamp what each node was actually deployed as, so liveness survives a
+    // later rename and a drifted node can say so.
+    r.panes.forEach((p, i) => { if(t.nodes[i]) t.nodes[i].deployed = p.name; });
+    save(); offerToSave(t.nodes);
+    log(`<b>${t.name}</b> is ${r.state}: ${r.panes.map(p=>p.name).join(", ")}`,
+        r.state==="READY"?"ok":"err");
+    if(r.problems) log("problems: "+r.problems.join(", ")
+      +" — the report names the obstacle for each pane","err");
+  }catch(e){ log(e.message,"err"); }
+  $("#go").disabled = false; refresh();
+};
+
+/* ---- keys --------------------------------------------------------------- */
+addEventListener("keydown", e => {
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  const meta = e.metaKey || e.ctrlKey;
+  if(!meta){
+    if(e.key === "Backspace" && sel){
+      e.preventDefault(); mark();
+      tab().nodes = tab().nodes.filter(n=>n.id!==sel); sel = null; save(); paint();
+    }
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if(k === "z"){ e.preventDefault(); return e.shiftKey ? redo() : undo(); }
+  if(k === "t"){ e.preventDefault(); $("#newtab").click(); }
+  else if(k === "w"){
+    e.preventDefault();
+    if(tabs.length===1) return log("the last tab stays","err");
+    tabs.splice(active,1); active = Math.max(0,active-1); save(); paint();
+  }
+  else if(k === "enter"){ e.preventDefault(); $("#go").click(); }
+  else if(k >= "1" && k <= "9"){
+    const i = Number(k)-1;
+    if(i < tabs.length){ e.preventDefault(); active = i; sel = null; save(); paint(); }
+  }
+});
+
+api("/api/models").then(c => { CATALOG = c; inspector(); })
+  .catch(e => log("models: "+e.message, "err"));
+/* ---- splitters ----------------------------------------------------------
+   Column widths are the operator's, kept per browser. A layout that cannot be
+   adjusted is one that is wrong on every display but the one it was built on,
+   which is exactly how this looked on his second monitor. */
+const WIDTHS = "nxb.studio.widths";
+function applyWidths(){
+  let w = {};
+  try{ w = JSON.parse(localStorage.getItem(WIDTHS) || "{}"); }catch(e){}
+  if(w.rail) $("#rail").style.width = w.rail + "px";
+  if(w.inspector) document.querySelector("aside").style.width = w.inspector + "px";
+}
+$$(".split").forEach(sp => {
+  sp.onpointerdown = e => {
+    e.preventDefault();
+    const which = sp.dataset.for;
+    const el = which === "rail" ? $("#rail") : document.querySelector("aside");
+    const startX = e.clientX, startW = el.getBoundingClientRect().width;
+    sp.classList.add("on"); sp.setPointerCapture(e.pointerId);
+    sp.onpointermove = m => {
+      const delta = which === "rail" ? m.clientX-startX : startX-m.clientX;
+      el.style.width = Math.max(150, Math.min(620, startW+delta)) + "px";
+    };
+    sp.onpointerup = () => {
+      sp.classList.remove("on"); sp.onpointermove = sp.onpointerup = null;
+      let w = {};
+      try{ w = JSON.parse(localStorage.getItem(WIDTHS) || "{}"); }catch(e){}
+      w[which] = Math.round(el.getBoundingClientRect().width);
+      try{ localStorage.setItem(WIDTHS, JSON.stringify(w)); }catch(e){}
+      paint();
+    };
+  };
+  sp.ondblclick = () => {
+    // Back to the default, because a splitter dragged into a corner is easy
+    // to do and otherwise hard to undo.
+    const el = sp.dataset.for === "rail" ? $("#rail")
+                                         : document.querySelector("aside");
+    el.style.width = sp.dataset.for === "rail" ? "224px" : "356px";
+    try{
+      const w = JSON.parse(localStorage.getItem(WIDTHS) || "{}");
+      delete w[sp.dataset.for];
+      localStorage.setItem(WIDTHS, JSON.stringify(w));
+    }catch(e){}
+    paint();
+  };
+});
+applyWidths();
+addEventListener("resize", () => paintCanvas());
+
+loadPersonas().then(inspector);
+load(); loadView(); paint(); refresh(); usage();
+setInterval(refresh, 5000); setInterval(usage, 30000);
+// One quick re-poll so a cold token scan lands without a 30s wait.
+setTimeout(usage, 8000);
+$("#usebar").onclick = () => showPane("usage");
+</script>

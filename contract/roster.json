@@ -1,0 +1,109 @@
+{
+  "_note": "ADDITIVE, following the h2/h3 pattern, so nothing depends on the state of the contract.json embargo. Merge when the queued vocabulary batch lands. Published in the SAME COMMIT as the code that emits these terms, per the rule from nxb-044.",
+  "contract_version": "0.1.0-roster",
+  "_design": "The operator spawns and names panes; the broker DISCOVERS that roster; the orchestrator dispatches to those live named workers. If more are requested than exist, the broker REFUSES, and that refusal is what makes the orchestrator ask the operator whether to create another. THE OPERATOR'S ROSTER IS THE CEILING: no agent runs that he did not invoke and name. It is a refusal rather than an obligation, which is why it lives in the mechanism and not in anyone's good behaviour.",
+  "refusal_vocabulary": [
+    "roster_insufficient",
+    "roster_unknown_worker",
+    "roster_unnamed",
+    "task_unknown_id",
+    "task_wrong_worker",
+    "task_revoked",
+    "runtime_cannot_enroll",
+    "roster_ambiguous_worker"
+  ],
+  "schemas": {
+    "roster_refusal": {
+      "doc": "THE PRODUCT, not an error path. A generic failure is useless here: the whole value is that it names what is missing and the exact command that would fix it, so the orchestrator can turn it into a question for the operator without inventing anything.",
+      "fields": {
+        "state": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "REFUSED"
+          ]
+        },
+        "reason": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "roster_insufficient",
+            "roster_unknown_worker",
+            "roster_unnamed"
+          ]
+        },
+        "detail": {
+          "type": "str",
+          "required": true,
+          "non_empty": true,
+          "doc": "Readable by the person who must act on it."
+        },
+        "requested": {
+          "type": "int",
+          "required": false
+        },
+        "available": {
+          "type": "int",
+          "required": true
+        },
+        "roster": {
+          "type": "list",
+          "required": true,
+          "doc": "Who IS on the roster. Empty is meaningful: it means nobody, or nobody nameable."
+        },
+        "remedy": {
+          "type": "list",
+          "required": true,
+          "doc": "Exact commands that would satisfy the request. May be empty when no command would."
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "success"
+      ]
+    }
+  },
+  "invariants": {
+    "items": [
+      {
+        "id": "ROSTER-1",
+        "rule": "Liveness is a CONNECT, never the existence of a socket file and never a pid check. Measured 2026-08-28: 26 socket files existed and 12 answered, so a roster built on existence would have offered more dead workers than live ones. A pid check is also wrong, because pids are recycled and a stale socket whose number now belongs to an unrelated process reads as alive."
+      },
+      {
+        "id": "ROSTER-2",
+        "rule": "A missing worker is REFUSED. The broker MUST NOT fall back to spawning one in its place, because that produces exactly the unnamed black-box agent this design exists to prevent, arriving through a convenience."
+      },
+      {
+        "id": "ROSTER-3",
+        "rule": "A roster that cannot name its members MUST say so rather than substituting addresses. Listing an internal handle implies a second-host the roster does not have and is useless to the person who must act on the refusal."
+      },
+      {
+        "id": "TASK-1",
+        "rule": "A task id is ISSUED, never invented. Minting runs the roster check first, so an id is evidence that a human-declared worker was asked for. A refused roster yields NO id, which is what makes the refusal load-bearing rather than advisory."
+      },
+      {
+        "id": "TASK-2",
+        "rule": "An id names WHO it is for, and a worker MUST reject one issued for another worker. Otherwise an orchestrator could mint legitimately for one worker and hand the directive to a different one."
+      },
+      {
+        "id": "TASK-3",
+        "rule": "A worker that cannot validate MUST refuse. Warning and continuing is the fail-open shape removed four times already; an absent, failing or unrunnable check is a refusal, not a caveat."
+      },
+      {
+        "id": "ENROL-1",
+        "rule": "The enforcement rule is bound to the session AT LAUNCH, not written down for someone to read. A rule in a document depends on having been read and on still being true, which is the exact failure that started this project."
+      },
+      {
+        "id": "ENROL-2",
+        "rule": "A runtime that cannot bind a name and a rule at launch CANNOT hold a roster worker, and that MUST be published as a refusal rather than tolerated. The operator should know which runtimes can hold a worker instead of discovering it when one silently misbehaves."
+      }
+    ]
+  },
+  "verdict_vocabulary": [
+    "task_valid"
+  ],
+  "_enforcement": "MEASURED CONSTRAINT [nxb-047, verified three times]: a plain process CANNOT send into a live pane. A bare script writing to a session's socket is HELD for the recipient user's approval; the claimed from_mode is ignored and the recipient's own mode does not matter. So the broker is NOT in the dispatch path. The orchestrator pane sends; the broker can only issue ids, record, and refuse to bless. Enforcement therefore moves to the WORKER, which rejects any task not carrying a valid broker-issued id. That is cooperation by a party with nothing to gain from cheating, which beats an orchestrator policing itself. IT IS NOT A SECURITY BOUNDARY: an orchestrator can always message a pane directly, and a worker that ignores its own system prompt will act on anything. What it removes is DRIFT, not attack.",
+  "measured": {
+    "ambiguous_worker": "Scenario-built fleets name workers by runtime and index, so two standing rigs both contain 'CC Worker 1'. A mint that picked whichever rig was enumerated first would issue a ticket that types into the wrong fleet. Refused instead, with each rig named."
+  }
+}

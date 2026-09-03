@@ -1,0 +1,31 @@
+{
+  "_note": "NOT PART OF THE PUBLISHED CONTRACT. Test-side, like enforcement_map.json, so contract files stay implementable by someone who has never seen nxb/.",
+  "_why": "A field that is carried, validated and guarded but never READ is a guard that guards nothing. `units` was exactly that: hashed into declared_digest, counted into declared_count, refused on by F-8 and F-9, and never delivered to any worker. No test, audit, hostile input, differential run or property sweep in this project found it. A human writing usability predictions did.",
+  "delivered_wholesale": {
+    "_why": "These schemas' instances are returned to a caller as a whole dict, so a field needs no literal read inside nxb/ to be consumed. The CALLER reads it. Marking a schema here is a claim that its instances actually reach a caller; if that stops being true, the marking is a lie and this file is where the lie lives.",
+    "receipt": "returned inside dispatch_return",
+    "h2_receipt": "returned inside h2_return",
+    "h3_receipt": "returned by the report hop to its caller",
+    "dispatch_return": "the return value of a dispatch call",
+    "h2_return": "the return value of a spawn call",
+    "h4_return": "the return value of a collect call",
+    "outcome": "returned inside h4_return",
+    "worker_report": "carried inside an outcome and delivered to the dispatcher",
+    "disposition": "recorded and read by an operator, never branched on",
+    "roster_refusal": "Returned WHOLE to the caller by the roster's require/require_names, which is the entire point: it is the product, not an error path, and the orchestrator reads every field to turn it into a question for the operator. Marking it here is a claim that its instances really do reach a caller, and they do: the refusal IS the return value."
+  },
+  "field_waivers": {
+    "_why": "Per-field exemptions for schemas that are NOT delivered wholesale. Each needs a reason a reader can disagree with.",
+    "capability_declaration.spawn": "Declarative. F-2 makes every field mandatory to force an honest statement of what a runtime can and cannot do; this one is read by an operator, not by code. See the SECOND CATCH note below: that reasoning is weaker than it looks.",
+    "capability_declaration.identity": "Declarative. The adapter hardcodes how it addresses a runtime; this field states the rule for a human reading the declaration. Suspicious for the reason in _SECOND_CATCH.",
+    "capability_declaration.terminal_signal": "Declarative. The adapter hardcodes which events are terminal for its own runtime rather than reading this. Suspicious for the same reason.",
+    "capability_declaration.cancel": "Declarative. Cancellation is implemented in the adapter, not driven from this string. Suspicious for the same reason.",
+    "capability_declaration.progress_signal": "Declarative, and null for every measured runtime, so there is nothing for code to read even in principle."
+  },
+  "pending_fix": {
+    "_why": "Known defects, ruled on, not yet fixed. Each names the ruling that deferred it. A waiver here is a debt, not an exemption.",
+    "_paid": "envelope.units and capability_declaration.start_timeout were both fixed in nxb-021 and their entries deleted. The expectedFailure that tracked units flipped to an unexpected success the moment the fix landed, which is what forced this file to be updated rather than left carrying a debt already paid."
+  },
+  "_SECOND_CATCH": "capability_declaration is ten fields of which THREE are read: runtime_id, start_signal (F-1) and refusal_signal. start_timeout is NOT read and is a real defect, not a declarative field: nxb-010 measured the right value, put it in the declaration, and the code ignores it in favour of a hardcoded default argument. The other five are waived above as declarative, but that waiver deserves suspicion: a structure that presents as configuration and functions as a comment is the exact shape of the document that started this project.",
+  "_expired_waivers": "`capability_declaration.last_proven_at` removed in nxb-042: the field itself was deleted from the contract when C-6 closed, so the waiver became a claim about a field that no longer exists. Caught by this guard's own staleness check against a contract change made in the same task, which is the waiver-expiry design working on its author."
+}

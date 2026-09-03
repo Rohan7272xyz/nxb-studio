@@ -1,0 +1,225 @@
+{
+  "_note": "ADDITIVE. contract/contract.json is under blind test and was NOT modified. H3 (worker to broker report) and H4 (broker to dispatcher delivery). Merge when the blind arm reports.",
+  "contract_version": "0.1.0-h3h4",
+  "_report_provenance": "The report field set is the one from the OLD NEXUS codebase, which survived 7 tasks across 3 workers on 2026-08-27 without amendment. nxb-004 recommended reusing the contract rather than the pipeline; this is that recommendation being taken.",
+  "schemas": {
+    "worker_report": {
+      "doc": "What the WORKER produces. Handed to Codex as --output-schema so the runtime constrains it, rather than the broker parsing prose.",
+      "fields": {
+        "task_id": {
+          "type": "str",
+          "required": true
+        },
+        "status": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "COMPLETE",
+            "BLOCKED",
+            "FAILED"
+          ]
+        },
+        "summary": {
+          "type": "str",
+          "required": true
+        },
+        "files_changed": {
+          "type": "str",
+          "required": true
+        },
+        "commands_run": {
+          "type": "str",
+          "required": true
+        },
+        "evidence": {
+          "type": "str",
+          "required": true
+        },
+        "risks": {
+          "type": "str",
+          "required": true
+        },
+        "next_action": {
+          "type": "str",
+          "required": true
+        },
+        "was_refused": {
+          "type": "bool",
+          "required": true,
+          "doc": "The worker's OWN claim that something was blocked. [M: nxb-002] a sandbox denial is invisible in the event stream, so this is the only channel that can carry it, and it is a claim not a measurement."
+        }
+      },
+      "forbidden_fields": []
+    },
+    "h3_receipt": {
+      "doc": "Emitted by the broker on observing a worker's report, before validating it.",
+      "fields": {
+        "receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "hop": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "H3"
+          ]
+        },
+        "parent_receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "observed_at": {
+          "type": "str",
+          "required": true
+        },
+        "observer": {
+          "type": "str",
+          "required": true
+        },
+        "payload_digest": {
+          "type": "str",
+          "required": true
+        },
+        "payload_bytes": {
+          "type": "int",
+          "required": true
+        },
+        "runtime_ref": {
+          "type": "str",
+          "required": true
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "valid",
+        "accepted",
+        "status",
+        "error",
+        "verdict",
+        "success"
+      ]
+    },
+    "outcome": {
+      "doc": "What H4 delivers. Two layers, kept separate on purpose: `delivery` is the broker's machinery, `report` is the WORKER'S CLAIM. Conflating them is how a clean pipeline gets read as a clean result.",
+      "fields": {
+        "dispatch_key": {
+          "type": "str",
+          "required": true
+        },
+        "parent_receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "delivery": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "REPORT_PRESENT",
+            "NO_REPORT",
+            "RUNTIME_FAILED"
+          ]
+        },
+        "report": {
+          "type": "dict",
+          "required": false
+        },
+        "reason": {
+          "type": "str",
+          "required": false
+        },
+        "provenance": {
+          "type": "dict",
+          "required": true,
+          "doc": "Includes refusal_scope: WHICH KINDS of refusal the RUNTIME can structurally report, drawn from a closed vocabulary, empty if none. A property of the runtime, recorded once, never mixed into the per-outcome effect field and never refused on. It replaced a boolean, which answered 'can this runtime report a refusal' with a yes that covered its permission layer and not the sandbox case the question was written for [nxb-029/033]."
+        },
+        "effect": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "UNCHECKED",
+            "VERIFIED",
+            "FALSIFIED"
+          ],
+          "doc": "Whether this outcome's intended effect was checked from OUTSIDE the worker. UNCHECKED is the honest default and is NOT a failure: most work has no externally checkable effect. FALSIFIED means checked and found not to have happened."
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "success"
+      ]
+    },
+    "h4_return": {
+      "doc": "What a dispatcher's collect call returns. R-050 amended: the call returns THE THING, never an acknowledgement that a thing was sent.",
+      "fields": {
+        "state": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "DELIVERED",
+            "PENDING",
+            "UNKNOWN_KEY"
+          ]
+        },
+        "dispatch_key": {
+          "type": "str",
+          "required": true
+        },
+        "outcome": {
+          "type": "dict",
+          "required": false
+        },
+        "reason": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "success"
+      ]
+    }
+  },
+  "invariants": {
+    "items": [
+      {
+        "id": "H4-no-block",
+        "rule": "H4 never blocks. You cannot block on a peer that is busy doing the work you gave it."
+      },
+      {
+        "id": "H4-no-timer",
+        "rule": "Non-delivery is surfaced by a QUERYABLE LIST that never clears itself, not by a timed alarm. A timer needs a budget and no budget has been measured."
+      },
+      {
+        "id": "H4-collect-is-the-receipt",
+        "rule": "An outcome is DELIVERED only when the dispatcher collects it. A push whose return value is a transmission ack proves nothing. [M: nxb-006]"
+      },
+      {
+        "id": "H3-layers-separate",
+        "rule": "Broker delivery state and worker-reported status are never merged into one field."
+      },
+      {
+        "id": "H3-refuse-on-falsified-only",
+        "rule": "Ratification MUST refuse on FALSIFIED and MUST NOT refuse on UNCHECKED. A refusal that fires on every outcome a runtime can produce teaches nothing and is switched off; the same asymmetry that fail-open-on-unproven applies here."
+      },
+      {
+        "id": "H3-runtime-blindness-is-provenance",
+        "rule": "WHICH KINDS of refusal a runtime can report is recorded in provenance as a property of the runtime, never as a property of an individual outcome, and never as a single boolean: a runtime can report one kind and not another, and a flag cannot say so."
+      }
+    ]
+  },
+  "refusal_vocabulary": [
+    "no_output_file",
+    "report_invalid",
+    "runtime_announced_api_retry",
+    "runtime_announced_error",
+    "turn_failed"
+  ],
+  "_vocabulary_note": "H3 HAD NO PUBLISHED VOCABULARY AT ALL while emitting five reasons, which is the largest single instance of the drift contract.json's _vocabulary_rule now forbids. `no_output_file` and `turn_failed` are the broker's own observations; the two `runtime_announced_*` terms are the runtime's own failure announcement, consumed rather than inferred, which turns a whole-budget wait into a sub-second refusal [nxb-025, measured nxb-022]. [nxb-042]",
+  "refusal_scope_vocabulary": {
+    "_doc": "WHAT KINDS of refusal a runtime can structurally REPORT. A property of the runtime, recorded once in provenance and NEVER refused on. Published here in nxb-042: it was born in code as a closed dict, which contract.json's _vocabulary_rule forbids, and a closed vocabulary no contract publishes is a capability claim living in a file. Separate from refusal_vocabulary because these are not reasons a dispatch is refused; they describe a RUNTIME.",
+    "harness_mediated": "The runtime's own permission layer refused a tool call and emitted a structural event identifying it AS a refusal, independent of what the model then narrated. Measured present on Claude Code, absent on Codex.",
+    "sandbox": "An OS or sandbox refusal of an effect INSIDE a tool the runtime already permitted is reported as a refusal. MEASURED ABSENT ON BOTH RUNTIMES: published as an honest negative, so a consumer can tell 'no runtime covers this' from 'nobody looked'.",
+    "_removed": "`opaque_tool_failure` was a third token and was removed in nxb-034. It answered a different question: the other two say a refusal IS REPORTED, it said a FAILURE IS VISIBLE without being named a refusal. A negative in a list of positives made the list non-monotonic and broke the emptiness test this vocabulary's own reader blesses. The FACT it carried is real and measured and currently has no home; see FAILURE-VISIBILITY-HOMELESS, deliberately still unpublished."
+  }
+}

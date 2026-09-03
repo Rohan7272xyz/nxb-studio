@@ -1,0 +1,18 @@
+{
+  "_doc": "Declared divergences from adapter conformance. A waiver is a claim with an expiry, not an exemption: each cites a finding in FINDINGS.json and the suite FAILS once that finding closes, so a fixed problem cannot keep its waiver.",
+  "waivers": {
+    "unpublished_reasons": {},
+    "verdict_named_fields": {
+      "error": "NOT an adapter defect. C9 derives its verdict vocabulary from the contract's receipt forbidden_fields, and `error` is forbidden THERE because on a receipt it would be a verdict. In a drain result it names an OBSERVED EVENT: the runtime announced an error. The real gap is that no contract publishes a field policy for an adapter result, so there is nothing to derive from. Reported as a contract gap rather than hand-tuned away, because narrowing the derived set by taste is how a fixture becomes a second copy of the contract."
+    },
+    "unemitted_terms": {},
+    "code_side_vocabulary_tokens": {},
+    "dropped_parameters": {
+      "nxb/adapters/claude_code.py:build_command:work_dir": "INTERFACE CONFORMANCE, and its safety is checked elsewhere rather than assumed. The shared base passes work_dir to every adapter's build_command because Codex needs it for -C; Claude Code takes its working directory from Popen's cwd=, which the base sets. That cwd= IS WD-1's fix and is a regression check already: finding WD-1 carries closes_when_check workdir_is_honoured_by_the_base. If someone removes cwd=work_dir, that check fails and this waiver is no longer true, so the safety is enforced by a test and not by this sentence.",
+      "nxb/adapters/claude_code.py:build_command:out_path": "INTERFACE CONFORMANCE. Same seam: Codex needs -o out_path, Claude Code writes its own transcript and the base computes and consumes out_path itself for out_present. Documented in the base's own _finalize docstring.",
+      "nxb/h3.py:collect_report:declaration": "A REAL INSTANCE, filed as WD-3 and OPEN. Waived only so a low-severity vestigial parameter does not redden the suite permanently, which FINDINGS.json's own _states note says is how a suite gets muted. Expires automatically: test_waivers_expire fails once the parameter is consumed or removed."
+    }
+  },
+  "_embargo_note": "EMBARGO LIFTED nxb-042. Every waiver in `unpublished_reasons` and `unemitted_terms` was deleted because the terms were resolved in the contracts themselves: seven emitted reasons published across contract.json, h2.json and the new h3.json vocabulary, three orphans removed with their reasons recorded in `_removed_refusal_terms`. Drift is now ZERO in both directions, so there is nothing left to waive. Cleared: ['adapter_raised', 'malformed_start_signal', 'no_output_file', 'runtime_announced_api_retry', 'runtime_announced_error', 'runtime_binary_unavailable', 'runtime_disproven', 'turn_failed'] and ['registration_unproven_capability', 'runtime_has_no_spawn', 'runtime_unknown_liveness'].",
+  "_scope_waivers_note": "The REFUSAL_SCOPE waivers were deleted in nxb-042 the moment contract/h3.json published `refusal_scope_vocabulary`. They existed only because the vocabulary had no published counterpart to be checked against. Leaving them would have made the new check DECORATIVE: verified by removing `sandbox` from the published vocabulary and watching the suite still pass, which is why this was caught before commit rather than after."
+}

@@ -1,0 +1,9 @@
+{
+  "_doc": "Declares the implementations under test. Add an arm here; the harness needs no other change. A third arm (blind Claude, nxb-013) drops in as another entry.",
+  "arms": [
+    {"name": "reference", "impl": "/Users/rohan/dev/nexus-bridge/nxb", "adapter": "reference.py",
+     "note": "The in-repo reference implementation, Worker 3, nxb-006 onward."},
+    {"name": "codex", "impl": "/Users/rohan/dev/nexus-bridge/evidence/nxb-009/codex-implementation/nxb", "adapter": "codex.py",
+     "note": "Codex gpt-5.6-luna blind implementation, nxb-009."}
+  ]
+}

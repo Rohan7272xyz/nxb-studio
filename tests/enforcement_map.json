@@ -1,0 +1,35 @@
+{
+  "_note": "NOT PART OF THE PUBLISHED CONTRACT. This binds each contract invariant to the symbol in THIS repository's reference implementation that enforces it. It lives test-side on purpose: contract/contract.json must stay implementable by someone who has never seen nxb/. See docs/CONTRACT-AMBIGUITY-nxb-009.md section 0.1 for why. Do not move this content back into the contract.",
+  "_moved_from": "contract/contract.json and contract/h2.json invariants[].enforced_by, nxb-012",
+  "bindings": {
+    "F-1": "nxb.runtimes.register",
+    "F-10": "nxb.ledger schema: PRIMARY KEY is receipt_id",
+    "F-11": "nxb.ledger.record_disposition UNIQUE constraint",
+    "F-2": "nxb.runtimes.register",
+    "F-5": "nxb.dispatch.dispatch",
+    "F-6": "nxb.dispatch._interpret requires a receipt_id token only nxb.dispatch._observe can mint",
+    "F-7": "receipt.forbidden_fields",
+    "F-8": "nxb.dispatch.dispatch",
+    "F-9": "nxb.dispatch.dispatch",
+    "R-051": "nxb.ledger.find_by_dispatch_key",
+    "provenance_is_asserted": "NOTHING. Declared open.",
+    "R-051-divergence": "nxb.dispatch.Broker.dispatch compares envelope_digest against the recorded one",
+    "no-hidden-failure": "nxb.roundtrip.RoundTrip.dispatch returns REFUSED when the spawn hop refuses",
+    "F-17": "nxb.dispatch.Broker.dispatch evaluates the refusal checks in the published order"
+  },
+  "bindings_h2": {
+    "F-13": "nxb.adapters.codex.CodexAdapter.spawn uses subprocess.DEVNULL",
+    "F-14": "nxb.adapters.codex.CodexAdapter.drain reports out_present, and nothing treats it as ok",
+    "F-15": "nxb.adapters.codex.CodexAdapter.spawn uses selectors, never a bare readline",
+    "F-15b": "nxb.adapters.codex.CodexAdapter._kill takes a Popen, and nothing in nxb shells out to pkill",
+    "F-16b": "nxb.h2 keys on the start signal and the -o file, never on the exit code",
+    "spawn_once": "nxb.ledger spawns.parent_receipt_id PRIMARY KEY"
+  },
+  "bindings_h3": {
+    "H4-no-block": "nxb.h4.Outbox is a store plus a collect call; nothing in it waits",
+    "H4-no-timer": "nxb.h4.Outbox.pending",
+    "H4-collect-is-the-receipt": "nxb.h4.Outbox.collect sets delivered_at",
+    "H3-layers-separate": "nxb.h3.collect_report returns delivery separately from report",
+    "H3-effect-unverified": "nxb.h3.effect_unverified, called by nxb.roundtrip.RoundTrip._outcome"
+  }
+}

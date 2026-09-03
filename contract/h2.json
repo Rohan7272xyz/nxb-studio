@@ -1,0 +1,178 @@
+{
+  "_note": "ADDITIVE. contract/contract.json is under blind test by nxb-009 and was NOT modified. H2 needs a receipt whose hop is 'H2', and contract.json froze receipt.hop to enum ['H1']. That is a contract defect found by building: a closed enum in a v1 schema blocks the v2 that was always planned. When nxb-009 reports, merge this file and widen the enum.",
+  "contract_version": "0.1.0-h2",
+  "schemas": {
+    "h2_receipt": {
+      "doc": "Emitted by the broker when a runtime acknowledges receipt of work. For Codex this is thread.started on stdout. Emitted BEFORE any judgement about whether the work will succeed.",
+      "fields": {
+        "receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "hop": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "H2"
+          ]
+        },
+        "parent_receipt_id": {
+          "type": "str",
+          "required": true,
+          "doc": "The H1 receipt this spawn descends from. Provenance chain, not provenance proof."
+        },
+        "observed_at": {
+          "type": "str",
+          "required": true
+        },
+        "observer": {
+          "type": "str",
+          "required": true
+        },
+        "runtime_id": {
+          "type": "str",
+          "required": true
+        },
+        "runtime_ref": {
+          "type": "str",
+          "required": true,
+          "doc": "The runtime's OWN identifier for the work. Codex: thread_id UUID. Never a name. MUST be non-empty: a blank ref names nothing, and C14 showed it flowing through validation into a forged liveness proof.",
+          "non_empty": true
+        },
+        "pinned_model": {
+          "type": "str",
+          "required": true,
+          "doc": "R-030. What the broker asked for. NOT what ran; that is H3's problem."
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "valid",
+        "accepted",
+        "status",
+        "error",
+        "verdict",
+        "success"
+      ]
+    },
+    "h2_return": {
+      "fields": {
+        "state": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "STARTED",
+            "REFUSED",
+            "UNKNOWN"
+          ]
+        },
+        "parent_receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "receipt": {
+          "type": "dict",
+          "required": false
+        },
+        "reason": {
+          "type": "str",
+          "required": false
+        },
+        "spawn_status": {
+          "type": "str",
+          "required": false,
+          "enum": [
+            "DID_NOT_START",
+            "UNKNOWN"
+          ]
+        },
+        "runtime_ref": {
+          "type": "str",
+          "required": false,
+          "doc": "On an already_spawned refusal, the id of the child that DID run. The broker holds it and used to say nothing, so the work was unreachable."
+        },
+        "evidence_path": {
+          "type": "str",
+          "required": false,
+          "doc": "On an already_spawned refusal, the transcript that child wrote, if the runtime's locator resolves it."
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "success"
+      ]
+    }
+  },
+  "refusal_vocabulary": [
+    "adapter_raised",
+    "already_spawned",
+    "malformed_start_signal",
+    "no_start_signal_within_timeout",
+    "parent_not_accepted",
+    "parent_unknown",
+    "runtime_binary_unavailable"
+  ],
+  "invariants": {
+    "items": [
+      {
+        "id": "F-13",
+        "rule": "stdin MUST be /dev/null. Measured: with stdin open, codex exec emits zero bytes and never exits.",
+        "enforced_by": "The spawn path attaches an empty, already-closed standard input to the child, so a runtime that blocks reading stdin cannot stall the spawn."
+      },
+      {
+        "id": "F-15",
+        "rule": "No start signal within start_timeout means kill the child. The wait MUST be non-blocking: a timeout checked only between blocking reads cannot fire against a child that emits nothing.",
+        "enforced_by": "The wait for a start signal is non-blocking: it observes the child's streams in a way that lets the timeout fire while every stream is silent, rather than only between completed reads."
+      },
+      {
+        "id": "F-15b",
+        "rule": "A broker may kill ONLY processes it holds a direct handle to, NEVER by command-line pattern. Pattern killing is cross-tenant destructive on a multi-agent machine and silent.",
+        "enforced_by": "Termination targets only a process handle the broker itself holds. No path anywhere selects processes by command-line pattern."
+      },
+      {
+        "id": "F-16b",
+        "rule": "Exit code is NOT a failure signal for a spawn that never started. Measured: a child SIGINTed for missing its start signal exits 0.",
+        "enforced_by": "A spawn's success is determined from its start signal and its declared output artifact. No path treats the child's exit code alone as evidence that the spawn started."
+      },
+      {
+        "id": "F-14",
+        "rule": "The -o file's ABSENCE is a reliable failure signal; its PRESENCE is not a success signal.",
+        "enforced_by": "The drain result reports the presence of the output artifact as a fact separate from success, and no path treats presence as success."
+      },
+      {
+        "id": "spawn_once",
+        "rule": "One H2 receipt per H1 receipt. A second spawn attempt is refused, not silently deduplicated.",
+        "enforced_by": "Each H2 spawn is keyed in the durable record on the H1 receipt it descends from, so a second spawn for the same parent receipt is refused rather than silently deduplicated."
+      },
+      {
+        "id": "RT-2-exposure",
+        "rule": "A refusal that the broker can only reach BECAUSE a spawn row exists MUST expose that row's runtime identifier. Refusing while holding direct evidence a child ran, and saying nothing about it, makes the work unreachable rather than absent."
+      }
+    ]
+  },
+  "measurements": {
+    "_source": "nxb-010, this Mac, 2026-08-28, codex-cli 0.150.1, -m gpt-5.6-luna -s read-only, trivial prompt",
+    "time_to_thread_started_seconds": {
+      "cold_first_spawn": 0.685,
+      "warm_samples": [
+        0.094,
+        0.118,
+        0.106,
+        0.096,
+        0.142,
+        0.167
+      ],
+      "warm_min": 0.094,
+      "warm_max": 0.167,
+      "warm_mean": 0.12,
+      "warm_median": 0.112,
+      "n": 7
+    },
+    "spec_assumption_A_023_was": 30,
+    "verdict": "A-023 was 30 seconds against an observed warm max of 0.167s and a cold 0.685s: 44x to 320x too generous. An over-long start timeout is not free: it is exactly how long a hung spawn holds a slot before the trap is detected."
+  },
+  "_removed_refusal_terms": {
+    "runtime_has_no_spawn": "Never emitted. No code path refuses a runtime for lacking a spawn primitive. Removed under the vocabulary rule in contract.json rather than left as a term a consumer could match on and never see. [nxb-042]"
+  },
+  "_vocabulary_note": "Published because they are emitted, under contract.json's _vocabulary_rule. `malformed_start_signal` is the one worth naming: a start signal that ARRIVED but carried no id is not a timeout, and reporting it as one sends the operator to the clock instead of to the runtime. It was emitted and unpublished for the whole life of this contract. [nxb-042]"
+}

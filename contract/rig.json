@@ -1,0 +1,66 @@
+{
+  "hop": "rig",
+  "purpose": "Stand up a named, enrolled scenario of live panes in tmux, so a multi-runtime scenario is reproducible instead of hand-assembled.",
+  "refusal_vocabulary": [
+    "rig_no_tmux",
+    "rig_session_exists",
+    "rig_unknown_scenario",
+    "rig_pane_not_ready",
+    "rig_trust_prompt",
+    "rig_update_prompt",
+    "rig_name_not_resolvable",
+    "rig_enrolment_unconfirmed",
+    "keystroke_unknown_worker",
+    "keystroke_no_rig",
+    "keystroke_ambiguous_rig",
+    "rig_tmux_unavailable"
+  ],
+  "_not_a_spawn_fallback": "the roster contract forbids the BROKER spawning a worker to satisfy a request, because that produces the black-box agent this design exists to prevent. The rig does not weaken that: spawning here is the OPERATOR'S explicit act, in a scenario he named, in his own tmux session, in front of him. Enforced structurally -- no dispatch module can import the rig, and a test walks their imports to prove it.",
+  "measured": {
+    "date": "2026-08-28",
+    "trust_prompt": "BOTH runtimes prompt for directory trust, in different words, and trust is per EXACT path: /Users/rohan being trusted does not cover /Users/rohan/dev/nexus-bridge. The rig REFUSES rather than answering, because granting trust loads project-local config, hooks and exec policies and that is the operator's decision.",
+    "enter_is_separate": "Sending text and Enter in one tmux send-keys leaves the text un-submitted: Codex's slash-command popup eats the Enter arriving in the same burst. The rig types, settles, then submits, and VERIFIES submission rather than assuming it.",
+    "id_not_name": "codex queue --thread '<name>' answered 'No active session found' for a pane that had renamed successfully AND whose name already resolved in session_index.jsonl, while the same message to that pane's UUID was delivered and answered instantly. A name is a label; the thread id is the address.",
+    "wrapping": "Codex hard-wraps output to the pane width, so the rename confirmation's UUID straddles a newline in narrow panes and tmux -J does not rejoin it. Matching is done against a whitespace-stripped copy of the screen.",
+    "codex_agents_unavailable": "`codex agents` requires a standalone managed install absent on this machine, and the app-server control socket does not exist. It is NOT the Codex roster source here; ~/.codex/session_index.jsonl is, and `codex queue` works without the daemon.",
+    "update_prompt": "MEASURED 2026-09-03: a Codex release landed mid-session and two of three Codex panes booted onto an update chooser ('Press enter to continue'). Unlisted, that is indistinguishable from a slow boot, so the rig spent its full readiness deadline per pane and reported 'not ready' instead of naming the obstacle. Blocking prompts are discovered, never predicted.",
+    "session_prefix_matching": "MEASURED 2026-09-03: tmux resolves a session target by PREFIX. `-t zztest` matched a session named `zztest-abc`, and `rig down` defaulting to `nxb` killed the operator's `nxb-s2` rig while reporting session `nxb`, which never existed. Every session-targeted tmux call now uses tmux's exact-match form `=name`.",
+    "empty_is_not_unaskable": "MEASURED 2026-09-03 by a freshly briefed orchestrator: rig_roster filtered its recorded panes against tmux's live pane ids, and a FAILED tmux call yielded an empty id set, so five live workers and an unreachable tmux produced the identical answer `workers: []`. The orchestrator was told it had no fleet and could not tell it had been lied to. An empty answer and an unaskable question must never look alike; rig_tmux_unavailable now separates them."
+  },
+  "runtimes": {
+    "claude_code": {
+      "names_at": "launch (-n)",
+      "enrollable": true,
+      "note": "named and enrolled before it renders a frame"
+    },
+    "codex": {
+      "names_at": "after launch (/rename, typed)",
+      "enrollable": false,
+      "refusal": "runtime_cannot_enroll",
+      "note": "no --append-system-prompt and no --name, so a codex pane is briefly anonymous and never carries the worker-side validation rule"
+    }
+  },
+  "_protection_asymmetry": "A Claude worker has TWO things between a directive and action: the socket transport's hold on non-session senders, and its own enrolment rule. A Codex worker has NEITHER and is therefore UNPROTECTED on both axes: `codex queue` injects into a live pane with no approval (measured three times), and codex cannot carry the validation rule because it has no --append-system-prompt. See RIG-1.",
+  "_transport": {
+    "rule": "TYPING is the dispatch transport for BOTH runtimes. The vendor channels (a Claude pane's socket, `codex queue`) are no longer the dispatch path for either.",
+    "why": "The two vendor channels behave differently -- one holds a non-session sender for approval, the other delivers with none -- so building on both meant inheriting the difference and patching it forever. Typing is the same channel on both, so the asymmetry leaves the path instead of being papered over.",
+    "authorisation": "Reachability is NOT authorisation. Anyone may still call `codex queue` or message a pane; anything arriving that way is UNMARKED, which the worker's rule defines as the operator talking. The question is not who could reach the pane but whether the message is marked and its id validates.",
+    "the_permissive_half": "UNMARKED INPUT IS TRUSTED AS THE OPERATOR. Anything on this machine that can type is therefore the operator as far as this rule is concerned. That is not a hole this design opened -- it is what having a keyboard means -- but it makes the most permissive reading the DEFAULT, and nothing here should be read as a wall. [ENFORCE-1]",
+    "marker": "[NXB-AUTOMATED]",
+    "structural": "One function emits a directive, it requires a task id, and no return path omits the marker. Asserted by reading the AST, not by convention."
+  },
+  "_ruling": {
+    "text": "Typing is the dispatch transport for both runtimes; keystroke dispatch IS the path.",
+    "attributed_to": "Rohan",
+    "relayed_by": "Orchestrator 2, nxb-051",
+    "heard_directly_from_rohan_by_this_worker": false,
+    "ruling_confirmed_by_rohan": false,
+    "note": "RECORDED AS RELAYED, NOT AS HEARD. This worker has never received a message from Rohan on this subject; the ruling reached it through an orchestrator paraphrasing a conversation. That is enough to BUILD on and not enough to CLOSE RIG-2 with. Set ruling_confirmed_by_rohan once he has stated it where it can be read directly."
+  },
+  "_posture": {
+    "declared": "bypass on BOTH runtimes: `claude --yolo` and `codex --yolo`.",
+    "why": "The operator's own decision for his own panes on his own machine. A pane that stops to ask permission is a pane he has to babysit, and this fleet exists to be watched rather than supervised keystroke by keystroke.",
+    "measured": "Until 2026-09-03 the Codex half launched --sandbox workspace-write while the Claude half launched --yolo. The asymmetry was nobody's decision: it sat in a default argument, where a policy name reads as a choice already made. Its measured consequence was that a sandboxed Codex ORCHESTRATOR could not reach the tmux socket under /private/tmp, so `rig workers` reported an empty fleet to the one agent whose job is knowing the fleet.",
+    "opt_in": "Passing --sandbox to launch_command still works and is deliberate: it gives one pane LESS than the declared posture, and it is visible in the command line on the operator's screen."
+  }
+}

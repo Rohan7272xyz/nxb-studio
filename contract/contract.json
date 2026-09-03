@@ -1,0 +1,406 @@
+{
+  "contract_version": "0.1.0",
+  "description": "Dispatch contract, H1. This file is the SOURCE OF TRUTH. A validator MUST be derived from this file rather than restating it, so that drift between an implementation's schema and this contract is structurally impossible rather than merely tested.",
+  "schemas": {
+    "envelope": {
+      "doc": "What a dispatcher hands the broker. H1 only.",
+      "fields": {
+        "dispatch_key": {
+          "type": "str",
+          "required": true,
+          "doc": "Dispatcher-generated, unique per intent. A repeat with an IDENTICAL envelope returns the original receipt and the original disposition, so a retry after an unknown outcome is safe. A repeat with a DIFFERENT envelope is REFUSED with dispatch_key_reuse_divergence: a changed payload under a used key is a new dispatch wearing an old name, and silently returning the old receipt lets an operator believe a correction shipped when it did not."
+        },
+        "runtime_id": {
+          "type": "str",
+          "required": true,
+          "doc": "Which registered runtime this is for. Closes vanish point 3."
+        },
+        "declared_count": {
+          "type": "int",
+          "required": true,
+          "doc": "How many units the sender believes it is sending. F-9 compares this to observed_count."
+        },
+        "declared_digest": {
+          "type": "str",
+          "required": true,
+          "doc": "sha256 the sender computed over its own units payload. F-8 compares."
+        },
+        "units": {
+          "type": "list",
+          "required": true,
+          "doc": "The work. Each unit is an object carrying an `instruction` string. These are rendered into the directive the runtime receives, so the digest and count guards protect the payload that actually does work. Before nxb-021 they guarded a field that reached no worker."
+        },
+        "dispatcher_id": {
+          "type": "str",
+          "required": true,
+          "doc": "Asserted, NOT authenticated. See contract.invariants.provenance_is_asserted."
+        }
+      },
+      "forbidden_fields": []
+    },
+    "receipt": {
+      "doc": "Emitted at observation, BEFORE any interpretation. F-6, F-7.",
+      "fields": {
+        "receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "hop": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "H1"
+          ]
+        },
+        "observed_at": {
+          "type": "str",
+          "required": true
+        },
+        "observer": {
+          "type": "str",
+          "required": true
+        },
+        "sender_ref": {
+          "type": "str",
+          "required": true,
+          "doc": "The dispatch_key, echoed verbatim."
+        },
+        "payload_digest": {
+          "type": "str",
+          "required": true
+        },
+        "payload_bytes": {
+          "type": "int",
+          "required": true
+        },
+        "observed_count": {
+          "type": "int",
+          "required": true,
+          "doc": "Counted STRUCTURALLY. Counting is not interpreting."
+        },
+        "declared_count": {
+          "type": "int",
+          "required": false
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "valid",
+        "accepted",
+        "status",
+        "error",
+        "verdict"
+      ]
+    },
+    "disposition": {
+      "doc": "Emitted after validation. F-11: exactly one per receipt.",
+      "fields": {
+        "receipt_id": {
+          "type": "str",
+          "required": true
+        },
+        "outcome": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "ACCEPTED",
+            "REJECTED"
+          ]
+        },
+        "reason": {
+          "type": "str",
+          "required": false
+        }
+      },
+      "forbidden_fields": []
+    },
+    "dispatch_return": {
+      "doc": "The value the dispatch CALL returns into the dispatcher's runtime. R-050.",
+      "fields": {
+        "state": {
+          "type": "str",
+          "required": true,
+          "enum": [
+            "OBSERVED",
+            "REFUSED",
+            "UNKNOWN"
+          ]
+        },
+        "receipt": {
+          "type": "dict",
+          "required": false
+        },
+        "pending_ref": {
+          "type": "str",
+          "required": false
+        },
+        "reason": {
+          "type": "str",
+          "required": false
+        },
+        "dispatch_status": {
+          "type": "str",
+          "required": false,
+          "enum": [
+            "DID_NOT_HAPPEN",
+            "UNKNOWN"
+          ]
+        },
+        "dispatch_key": {
+          "type": "str",
+          "required": true
+        }
+      },
+      "forbidden_fields": [
+        "ok",
+        "success"
+      ]
+    },
+    "capability_declaration": {
+      "doc": "F-2: every field mandatory. A capability the runtime lacks is explicitly null WITH A REASON, never omitted.",
+      "fields": {
+        "runtime_id": {
+          "type": "str",
+          "required": true
+        },
+        "spawn": {
+          "type": "nullable",
+          "required": true
+        },
+        "start_signal": {
+          "type": "nullable",
+          "required": true,
+          "doc": "F-1: null here means the broker MUST refuse to register."
+        },
+        "start_timeout": {
+          "type": "nullable",
+          "required": true
+        },
+        "identity": {
+          "type": "nullable",
+          "required": true
+        },
+        "terminal_signal": {
+          "type": "nullable",
+          "required": true
+        },
+        "refusal_signal": {
+          "type": "nullable",
+          "required": true
+        },
+        "cancel": {
+          "type": "nullable",
+          "required": true
+        },
+        "progress_signal": {
+          "type": "nullable",
+          "required": true
+        }
+      },
+      "forbidden_fields": [],
+      "_removed_fields": {
+        "last_proven_at": "REMOVED nxb-042, closing C-6 by its second branch. Liveness moved to the proof store, and after that no production code read this field: the only readers left were two tests asserting a value nobody used, which is the never-read class wearing a test as a disguise. A runtime's liveness is established by a proof over an artefact the runtime itself wrote, never by a field in its own declaration. Both blind arms independently found the liveness state machine undefined and each invented a LIVE value and a setter for it [nxb-041], which is what an inert field with no writer looks like from outside."
+      }
+    }
+  },
+  "null_states": {
+    "doc": "A capability may be null for two DIFFERENT reasons and the declaration must say which. A signal that was looked for and found absent is not the same as a signal that was never measured. Collapsing them loses real information.",
+    "values": [
+      "MEASURED_ABSENT",
+      "UNMEASURED"
+    ]
+  },
+  "refusal_vocabulary": [
+    "count_divergence",
+    "digest_divergence",
+    "dispatch_key_reuse_divergence",
+    "malformed_envelope",
+    "registration_null_start_signal",
+    "registration_omitted_field",
+    "runtime_disproven",
+    "runtime_unregistered",
+    "uncanonicalisable_payload"
+  ],
+  "invariants": {
+    "doc": "Rules the broker must enforce as REFUSALS, each naming a published reason. Most cannot be expressed by the schemas at all. F-2 is the exception and is listed anyway: `capability_declaration` already marks every field required, so generic validation covers it, but a registration that fails MUST refuse with `registration_omitted_field` rather than surface a validation error, and that part no schema expresses. The earlier wording claimed all of these were rules a schema CANNOT express, which a blind reader correctly called wrong in nxb-041. Each states the property that must hold, in terms observable from outside an implementation, and a rule with no enforcement must say so.",
+    "items": [
+      {
+        "id": "F-6",
+        "rule": "No interpretation of a payload before a receipt for it exists.",
+        "enforced_by": "Interpretation of a payload is gated behind a capability that only the observation step can mint, and that capability is re-verified against the durable record before use, so a forged or replayed one cannot unlock interpretation of a payload whose receipt was never written."
+      },
+      {
+        "id": "F-7",
+        "rule": "A receipt carries no verdict.",
+        "enforced_by": "The receipt validator refuses every name listed in the receipt schema's forbidden_fields."
+      },
+      {
+        "id": "F-8",
+        "rule": "Digest divergence refuses; it is never resolved by proceeding with observed bytes.",
+        "enforced_by": "The dispatch path refuses on digest divergence, and contains no branch that continues using the observed bytes."
+      },
+      {
+        "id": "F-9",
+        "rule": "Count divergence refuses, including when observed_count is zero and nothing else went wrong.",
+        "enforced_by": "The dispatch path refuses on count divergence, including the case where the observed count is zero and nothing else went wrong."
+      },
+      {
+        "id": "F-10",
+        "rule": "TWO IDENTITIES, AND THEY ARE NOT INTERCHANGEABLE. `receipt_id` identifies an OBSERVATION and is the uniqueness key for dispositions (F-11). `dispatch_key` identifies an INTENT and is the replay key (R-051). No third identifier, and in particular no dispatcher-supplied task identifier, may key deduplication.",
+        "enforced_by": "The durable record keys dispositions on the receipt identifier and resolves a repeated intent through a separate index on dispatch_key. Neither index is keyed on any other dispatcher-supplied identifier.",
+        "_amended": "nxb-042, from nxb-041 Arm B. As written this said 'deduplication keys on receipt_id, never on a task id' and DIRECTLY CONTRADICTED R-051, which requires resolving a repeat by dispatch_key. Arm B found the contradiction on reading alone; Arm A looked straight at F-10, noticed its undefined term, and missed it. It also forbade keying on `task_id`, a term NO SCHEMA IN THIS CONTRACT DEFINES, so the rule forbade something undefined. Both are recorded rather than quietly repaired: the implementation had already resolved this in practice, and what was missing was saying so."
+      },
+      {
+        "id": "F-11",
+        "rule": "Exactly one disposition per receipt.",
+        "enforced_by": "The durable record refuses a second disposition for a receipt that already has one, structurally, rather than by caller discipline."
+      },
+      {
+        "id": "F-1",
+        "rule": "Refuse to register a runtime whose start_signal is null.",
+        "enforced_by": "Registration refuses a capability declaration whose start_signal is null."
+      },
+      {
+        "id": "F-2",
+        "rule": "Refuse to register a declaration with any omitted field.",
+        "enforced_by": "Registration refuses a capability declaration with any omitted field."
+      },
+      {
+        "id": "F-5",
+        "rule": "Refuse to dispatch to a runtime whose liveness is UNKNOWN.",
+        "enforced_by": "The dispatch path refuses when the target runtime's liveness is UNKNOWN."
+      },
+      {
+        "id": "R-051",
+        "rule": "A repeated dispatch_key returns the ORIGINAL receipt, never a second dispatch.",
+        "enforced_by": "A repeated dispatch_key resolves to the original receipt held in the durable record, and performs no second dispatch."
+      },
+      {
+        "id": "provenance_is_asserted",
+        "rule": "dispatcher_id is asserted by the sender and NOT authenticated. Anything local that can write to the peer socket inherits peer trust. No code here can close this; it is recorded so no consumer mistakes it for authentication.",
+        "enforced_by": "NOTHING. Declared open."
+      },
+      {
+        "id": "R-051-divergence",
+        "rule": "A repeated dispatch_key whose envelope differs from the recorded one MUST be refused, never answered with the original receipt. A repeated key whose envelope is identical MUST return the original DISPOSITION, so a retry cannot convert a refusal into a success.",
+        "enforced_by": "the dispatch path compares a digest of the whole submitted envelope against the one recorded under that key"
+      },
+      {
+        "id": "no-hidden-failure",
+        "rule": "A dispatch response whose state reads as success MUST NOT carry a failure in a nested field. If any hop refused, the response state says so.",
+        "enforced_by": "the round trip returns a refusing state, not a succeeding one with a nested failure, whenever a hop refuses"
+      },
+      {
+        "id": "F-17",
+        "rule": "REFUSAL ORDER IS PART OF THE CONTRACT. An envelope that would fail more than one check is refused by the FIRST of these that applies, in this order: 1 uncanonicalisable_payload, 2 dispatch_key_reuse_divergence, 3 malformed_envelope, 4 runtime_unregistered, 5 runtime_disproven, 6 digest_divergence, 7 count_divergence. Checks 1 to 5 happen BEFORE a receipt is minted; 6 and 7 happen after, so those refusals carry a receipt and the earlier ones cannot.",
+        "enforced_by": "The dispatch path evaluates the checks in that order and returns on the first that applies.",
+        "_added": "nxb-042, closing C-7. Arm B in nxb-041 found the ambiguity independently and supplied the concrete input: an envelope naming an unregistered runtime is `malformed_envelope` under one reading and `runtime_unregistered` under the other. The order published here is the one the implementation already follows, verified against the implementation's own ordering rather than asserted.",
+        "order": [
+          "uncanonicalisable_payload",
+          "dispatch_key_reuse_divergence",
+          "malformed_envelope",
+          "runtime_unregistered",
+          "runtime_disproven",
+          "digest_divergence",
+          "count_divergence"
+        ],
+        "_order_is_data": "The sequence is published as an ARRAY, not only inside the rule prose. The first check written against it parsed the prose and captured 'to', 'happen' and 'and' out of the sentence explaining which checks precede the receipt. An ordering a machine must honour should not have to be recovered from a sentence. [nxb-044]"
+      }
+    ]
+  },
+  "examples": {
+    "envelope": {
+      "dispatch_key": "dk-example-0001",
+      "runtime_id": "runtime-a",
+      "declared_count": 1,
+      "declared_digest": "PLACEHOLDER_COMPUTED_AT_TEST_TIME",
+      "units": [
+        {
+          "summary": "one unit of work"
+        }
+      ],
+      "dispatcher_id": "dispatcher-1"
+    },
+    "receipt": {
+      "receipt_id": "rcpt-example-0001",
+      "hop": "H1",
+      "observed_at": "2026-08-28T16:00:00Z",
+      "observer": "observer-1",
+      "sender_ref": "dk-example-0001",
+      "payload_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "payload_bytes": 42,
+      "observed_count": 1,
+      "declared_count": 1
+    },
+    "disposition": {
+      "receipt_id": "rcpt-example-0001",
+      "outcome": "ACCEPTED"
+    },
+    "dispatch_return": {
+      "state": "OBSERVED",
+      "dispatch_key": "dk-example-0001",
+      "pending_ref": "rcpt-example-0001"
+    },
+    "capability_declaration": {
+      "runtime_id": "runtime-a",
+      "spawn": "send(target=<ref>, message=<directive>)",
+      "start_signal": null,
+      "start_timeout": 30,
+      "identity": "ref + pid; re-resolve the session handle immediately before each send",
+      "terminal_signal": null,
+      "refusal_signal": null,
+      "cancel": "interrupt signal to the runtime process",
+      "progress_signal": "idle notice (LIVENESS ONLY, never completion)"
+    }
+  },
+  "canonicalisation": {
+    "_doc": "C-1. How to turn a value into the bytes a digest is taken over. This was unpublished, so two conforming implementations computed different digests for the same payload and F-8 fired for reasons that had nothing to do with the payload being wrong.",
+    "steps": [
+      "1. REFUSE the payload if it contains a non-finite number (NaN, Infinity, -Infinity). These are not JSON; a lenient parser will read them back and a conforming one will not.",
+      "2. REFUSE the payload if it contains a string that is not valid Unicode, such as an unpaired surrogate. Such text cannot be put on any UTF-8 wire, so digesting it produces a guard over something undeliverable.",
+      "3. Serialise as JSON with object keys sorted by code point, no whitespace between tokens, every non-ASCII character escaped, and non-finite numbers rejected rather than emitted.",
+      "4. Encode the result as ASCII."
+    ],
+    "why_ascii": "Escaping leaves no encoding ambiguity for another runtime to get wrong. The bytes are reproducible by anything that can sort keys and escape a string, without agreeing on a text encoding first.",
+    "refusal": "uncanonicalisable_payload",
+    "test_vectors": [
+      {
+        "value": [
+          {
+            "b": 1,
+            "a": 2
+          }
+        ],
+        "canonical": "[{\"a\":2,\"b\":1}]"
+      },
+      {
+        "value": [
+          {
+            "s": "e\u0301"
+          }
+        ],
+        "canonical": "[{\"s\":\"e\\u0301\"}]"
+      },
+      {
+        "value": [],
+        "canonical": "[]"
+      },
+      {
+        "value": [
+          {
+            "n": 1.5
+          }
+        ],
+        "canonical": "[{\"n\":1.5}]"
+      }
+    ]
+  },
+  "_vocabulary_rule": "A refusal reason is PUBLISHED IF AND ONLY IF some code path can emit it. Both directions are defects: a reason the code emits that no contract publishes cannot be matched on by a consumer, and a reason a contract publishes that nothing emits is a guard that guards nothing. Enforced in both directions, over every contract in this directory, by a guard in the test suite, so this clause is checked rather than promised. [nxb-042]",
+  "_numbering": "Invariant ids are inherited from docs/SPEC-RECEIPTS-LIVENESS.md, which numbers F-1 upward across all four hops. This file publishes only the subset that is a rule about H1's data, so the sequence has GAPS AND THEY ARE NOT OMISSIONS. F-3, 'refuse to register a runtime whose declared non-null capabilities have not each been observed by a canary', belongs to the proof and canary layer and is not an H1 schema rule. F-4, 'refuse a capability proof older than the freshness budget', was DELETED when the freshness budget itself was deleted [nxb-011]. Recorded because a blind reader flagged the gap in nxb-041 and had no way to tell a deletion from something it was not being told.",
+  "_removed_refusal_terms": {
+    "registration_unproven_capability": "Never emitted, and REMOVED RATHER THAN IMPLEMENTED, which is the conservative half of the vocabulary rule. Its intended meaning has now been independently converged on THREE times by readers who could not have been told: Codex in nxb-009, and both blind arms in nxb-041, each reading it as 'a null capability declared without a MEASURED_ABSENT or UNMEASURED reason'. That convergence is the reason this note exists rather than a silent deletion: if that rule is ever implemented, this term is the name it should carry. Publishing it while nothing emits it is what made it findable three times.",
+    "runtime_has_no_spawn": "Never emitted by any code path. No rule refuses a runtime for lacking a spawn primitive.",
+    "runtime_unknown_liveness": "DEAD. Replaced by `runtime_disproven` when liveness moved to the proof store. The replacement was made in code, in an EXTRA_REFUSALS list, instead of here, so one substitution produced both directions of drift at once."
+  },
+  "_unknown_fields": "SCHEMAS ARE OPEN. An instance MAY carry fields a schema does not define, and a validator MUST NOT refuse it for that alone. What a schema forbids is listed in its `forbidden_fields`, and an EMPTY list means nothing is forbidden, not that everything is.\n\nDecided from this contract's own structure rather than by preference: `receipt.forbidden_fields` names `ok`, `valid`, `accepted`, `status`, `error` and `verdict`. Under a CLOSED reading that list would be dead weight, because an undefined field would already be refused. The list only does work if unknown fields are otherwise allowed, so the design was open all along and merely never said so. The substantive reason to keep it open is forward compatibility: a newer dispatcher that adds a field must still be able to talk to an older broker, and the real hazard, smuggling a verdict into an observation, is what `forbidden_fields` exists to stop.\n\nTHE EXAMPLES ARE THE EXCEPTION AND ARE VALIDATED STRICTLY. An example is a specimen of its schema, so a field the schema does not define is either a stale leftover or a documentation lie, and a reader trusts examples more than prose. [nxb-044]\n\nWritten because both blind arms in nxb-041 found this silence and read it OPPOSITELY: Arm A treated the schemas as closed and refused an envelope carrying an extra field, Arm B treated them as open and accepted it, citing the empty `forbidden_fields` as support. Arm B's reading is the one adopted here, and by the stronger form of its own argument. BLIND-8."
+}

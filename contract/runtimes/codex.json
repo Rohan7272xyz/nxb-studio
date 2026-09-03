@@ -1,0 +1,20 @@
+{
+  "_source": "Measurements from nxb-002 and nxb-010, both on this Mac, codex-cli 0.150.1. This file was ADDED in nxb-037 after `nxb run --runtime codex` was found dead: the adapter existed and the CLI knew it, and no declaration shipped, so F-1 refused the runtime and half the product was unreachable. Every value below is measured or explicitly null with a reason; nothing is inferred from the Claude Code declaration.",
+  "spawned_child": {
+    "runtime_id": "codex",
+    "spawn": "codex exec --json --skip-git-repo-check -s <sandbox> -m <pinned> -C <abs workdir> -o <out> [--output-schema <path>], stdin from /dev/null, broker owns stdout",
+    "start_signal": "the thread.started event on stdout, first line, carrying thread_id. LOCAL: it proves a binary launched, not that the runtime can reach its model.",
+    "start_timeout": 5,
+    "identity": "thread_id UUID from thread.started. UUID ONLY: names are auto-generated and mutate, and 4 of 8 sampled ids carried more than one name.",
+    "terminal_signal": "exit code 0 completed / 1 turn failed / 2 usage error, plus turn.completed or turn.failed in the stream. The -o file's ABSENCE is a reliable failure signal; its PRESENCE is not a success signal, because it was once written while a process still hung.",
+    "refusal_signal": null,
+    "cancel": "SIGINT then SIGKILL to the child's own process group, via the shared kill discipline",
+    "progress_signal": null,
+    "_null_reasons": {
+      "refusal_signal": "MEASURED_ABSENT. Under -s read-only a blocked write produced NO event at all; the only trace was the agent's prose. Verified three ways in nxb-002: grep, a full event dump, and the unchanged file on disk. This is the finding W3-9 rests on and it is why an outcome from this runtime carries effect UNCHECKED.",
+      "progress_signal": "MEASURED_ABSENT. Only start and terminal signals were observed; nothing distinguishes a slow model from a stalled one."
+    },
+    "_start_timeout_basis": "[A] EXTRAPOLATION from nxb-010: n=7 on this Mac, warm 0.094 to 0.167s with median 0.112, and ONE cold sample at 0.685s. 5s is ~30x the warm max and ~7x the cold observation. Deliberately not 30: an over-long start timeout is exactly how long a hung spawn holds a slot before the trap is detected."
+  },
+  "_last_proven_at_removed": "nxb-042, closing C-6. Inert field, no production reader; liveness is established by a proof over an artefact the runtime wrote."
+}

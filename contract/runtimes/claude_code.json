@@ -1,0 +1,55 @@
+{
+  "_source": "nxb-001, measured 2026-08-28. Relayed to nxb-006 by Orchestrator 1.",
+  "_note": "TWO declarations for one runtime. They differ in exactly one field, and that field decides whether the broker may register it at all. This is the 'the inbox is a precondition for the receipt, not a feature of it' finding, expressed as data. THIRD DECLARATION ADDED nxb-027: `spawned_child`. The two above describe PEER-MESSAGING an existing session. Neither is registrable for a spawned child, because `without_broker_inbox` has a null start_signal and F-1 refuses it, and `with_broker_inbox` describes a socket the spawn path does not use. A child the broker starts needs no inbox at all: its start signal arrives on its own stdout, which the broker already owns.",
+  "without_broker_inbox": {
+    "runtime_id": "claude_code",
+    "spawn": "SendMessage(to=<ref>, message=<directive>)",
+    "start_signal": null,
+    "start_timeout": 30,
+    "identity": "address by ref + pid; re-resolve sessionId immediately before each send",
+    "terminal_signal": null,
+    "refusal_signal": null,
+    "cancel": "SIGINT to the real claude pid (NOT the /bin/sh wrapper)",
+    "progress_signal": "peer_idle_notice \u2014 LIVENESS ONLY",
+    "_null_reasons": {
+      "start_signal": "MEASURED_ABSENT \u2014 the recipient emits peer_message_status ONLY if the sender's `from` is a well-shaped socket path inside its own socket namespace. A sender without one is told nothing. Recipient logs 'hold-receipt skipped: reply address unshaped or outside our socket namespace'.",
+      "refusal_signal": "UNMEASURED for this transport. nxb-029 measured a refusal signal on the SPAWNED-CHILD path (claude -p --output-format stream-json), where the broker reads the child's own stdout. A peer pane addressed by SendMessage does not hand the broker that stream at all, so permission_denials and system/permission_denied are not observable here. nxb-029 wrote the spawn-path text onto this declaration in error; nxb-033 reverted it.",
+      "terminal_signal": "UNMEASURED for this transport, same error and same revert. SIGINT is known to produce a final result record with terminal_reason 'aborted_tools' and result null [nxb-001], but that is the child's stream, and normal-completion shape over the peer transport has never been measured."
+    },
+    "_refusal_scope": []
+  },
+  "with_broker_inbox": {
+    "runtime_id": "claude_code",
+    "spawn": "SendMessage(to=<ref>, message=<directive>) from a bound /tmp/cc-socks/<name>.sock",
+    "start_signal": "peer_message_status {held|denied|expired|delivered|refused|dropped} correlated by msg_id, delivered to the broker's own socket",
+    "start_timeout": 30,
+    "identity": "address by ref + pid; re-resolve sessionId immediately before each send. A CHANGED REF MEANS THE PROCESS RESTARTED. /clear rotates sessionId while ref/pid/socket/name stay intact, and a cached sessionId is then dropped SILENTLY with 'session_id mismatch'.",
+    "terminal_signal": null,
+    "refusal_signal": null,
+    "cancel": "SIGINT to the real claude pid (NOT the /bin/sh wrapper under `command claude ...`)",
+    "progress_signal": "peer_idle_notice \u2014 LIVENESS ONLY, NEVER completion. Fired at 10.8s on a task still running a 25s backgrounded command.",
+    "_null_reasons": {
+      "refusal_signal": "UNMEASURED for this transport. nxb-029 measured a refusal signal on the SPAWNED-CHILD path (claude -p --output-format stream-json), where the broker reads the child's own stdout. A peer pane addressed by SendMessage does not hand the broker that stream at all, so permission_denials and system/permission_denied are not observable here. nxb-029 wrote the spawn-path text onto this declaration in error; nxb-033 reverted it.",
+      "terminal_signal": "UNMEASURED for this transport, same error and same revert. SIGINT is known to produce a final result record with terminal_reason 'aborted_tools' and result null [nxb-001], but that is the child's stream, and normal-completion shape over the peer transport has never been measured."
+    },
+    "_refusal_scope": []
+  },
+  "spawned_child": {
+    "runtime_id": "claude_code",
+    "spawn": "claude -p <prompt> --model <pinned> --output-format stream-json --verbose, stdin from /dev/null, broker owns stdout",
+    "start_signal": "the system/init frame on the child's own stdout, carrying session_id. LOCAL: it proves a binary launched on this machine, not that the runtime can reach its model.",
+    "start_timeout": 10,
+    "identity": "session_id from the system/init frame. The transcript at ~/.claude/projects/<cwd-slug>/<session_id>.jsonl carries the id in both its basename and its first line, so a liveness proof over it is verifiable rather than asserted.",
+    "terminal_signal": "the single result frame. subtype success with is_error false is completion; anything else is failure.",
+    "refusal_signal": "system/permission_denied \u2014 a dedicated mid-stream event on the child's stdout carrying tool_name, tool_use_id and decision_reason_type, plus a structured result.permission_denials[] entry with the full tool_input. Measured [nxb-029, nxb-033] over 11 runs. It SURVIVES NARRATION: in three runs across two different tools the model's entire output was 'DONE' and the denial was recorded anyway, so the channel is not the model's to suppress. SCOPE: harness-mediated denials only. An effect the harness did not screen, refused by the OS inside a permitted shell command, produces NO denial event and an empty permission_denials; it is visible only as tool_result.is_error true with a non-zero exit. See _refusal_scope.",
+    "cancel": "SIGINT then SIGKILL to the owned pid, via the shared kill discipline",
+    "progress_signal": "assistant frames, which are post-round-trip and therefore prove reachability where system/init does not",
+    "_null_reasons": {},
+    "_start_timeout_basis": "[A] EXTRAPOLATION. Measured nxb-027 on this Mac, n=5, warm: 0.567 / 0.606 / 0.680 / 0.953 / 1.339 seconds, median 0.680. 10s is ~7.5x the observed max. NO COLD SAMPLE was taken and a cold Node start could be materially slower. Deliberately not the 30 the peer-messaging declarations carry: an over-long start timeout is exactly how long a hung spawn holds a slot before the trap is detected.",
+    "_refusal_scope": [
+      "harness_mediated"
+    ]
+  },
+  "_measured_nxb029": "refusal_signal measured on the SPAWNED-CHILD path only. nxb-029 attached it to the two peer declarations in error and nxb-033 corrected that: the measurement belongs to the transport whose stream the broker reads. Evidence evidence/nxb-029/. _refusal_scope carries the machine-readable scope, drawn from a closed vocabulary; a declaration with no refusal_signal must claim no scope, and no declaration may claim the sandbox tier, which is measured absent on every runtime so far.",
+  "_last_proven_at_removed": "nxb-042, closing C-6. The field was inert: no production code read it, liveness is established by a proof over an artefact the runtime itself wrote, and the only readers left were tests asserting a value nobody used. Removed from the schema and from every declaration together, because a field dropped from the schema and left in the data is the dropped-value class [WD-1, WD-3]."
+}

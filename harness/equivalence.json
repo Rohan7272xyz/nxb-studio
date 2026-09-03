@@ -1,0 +1,129 @@
+{
+  "_doc": "The declared equivalence relation for differential testing of NEXUS Bridge implementations. A naive diff of two receipts reports 100% divergence, because receipt_id is a fresh uuid and observed_at is a wall clock. So a differential harness cannot exist without first stating WHICH fields may legitimately differ. That statement is not a test fixture. It is a contract artifact, and every entry in it is either a contract clause nobody has written yet, or a defect in an implementation.",
+  "_written": "nxb-012, Worker 1, BEFORE running the harness. Findings attributed to 'writing' below were surfaced by stating the relation precisely. Findings attributed to 'running' were surfaced by executing it. The split is recorded on purpose to test whether generation beats testing here.",
+  "_verdicts": {
+    "MUST_MATCH": "Two conforming implementations MUST produce byte-identical values. Divergence is a defect in at least one of them.",
+    "FREE": "Values may differ. The contract either says so or the field is structurally nondeterministic. A field may be FREE in value and still carry a separate `presence` verdict: freedom is about the value, never about existence.",
+    "UNWRITTEN": "The contract does not say. Divergence here is not an implementation defect, it is a missing contract clause, and the clause belongs in contract.json."
+  },
+  "receipt": {
+    "receipt_id": {
+      "verdict": "FREE",
+      "basis": "nondeterministic",
+      "note": "Implementation-generated identifier. Both use a uuid4 hex with an 'rcpt-' prefix, which is convergence by convention and not by contract.",
+      "missing_clause": "The contract never says receipt_id is implementation-chosen and opaque, nor that cross-implementation equality is not required. It should.",
+      "found_by": "writing"
+    },
+    "hop": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "enum [\"H1\"]."
+    },
+    "observed_at": {
+      "verdict": "FREE",
+      "basis": "nondeterministic",
+      "note": "Wall clock. BUT THE FORMAT IS NOT FREE AND THE CONTRACT DOES NOT PIN IT. The reference emits second precision ('%Y-%m-%dT%H:%M:%SZ'); the Codex arm emits millisecond precision via isoformat(timespec='milliseconds'). Both satisfy type 'str' and both look like the contract's example. A consumer parsing or ordering these across arms gets two different shapes.",
+      "missing_clause": "observed_at MUST be RFC3339 UTC at a stated precision. Pick one.",
+      "found_by": "writing"
+    },
+    "observer": {
+      "verdict": "UNWRITTEN",
+      "basis": "unwritten_clause",
+      "note": "Contract requires the field and says nothing about its content. Both default to 'nxb-broker', which is convergence copied from the contract's own example rather than derived from a rule.",
+      "missing_clause": "What identity observer carries, and whether it must be stable across restarts.",
+      "found_by": "writing"
+    },
+    "sender_ref": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "'The dispatch_key, echoed verbatim.'"
+    },
+    "payload_digest": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "F-8 compares declared against observed and refuses on divergence. Two implementations that disagree here cannot interoperate at all. This is the field C-1 lives in.",
+      "missing_clause": "The contract names sha256 over 'its own units payload' and never defines the canonicalisation. Naming the algorithm is provably insufficient: both arms chose sha256 over sort_keys+compact JSON and still disagree.",
+      "found_by": "writing"
+    },
+    "payload_bytes": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "SECOND CONSEQUENCE OF THE SAME DEFECT, and one nobody had recorded. payload_bytes is the length of the canonical encoding, so an unpinned canonicalisation makes the byte COUNT diverge too, not only the digest. A consumer reconciling sizes across arms sees a mismatch with no digest involved.",
+      "missing_clause": "Same clause as payload_digest: publish the canonicalisation as bytes.",
+      "found_by": "writing"
+    },
+    "observed_count": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "Counted structurally."
+    },
+    "declared_count": {
+      "verdict": "MUST_MATCH",
+      "basis": "unwritten_clause",
+      "note": "Required in the envelope, optional in the receipt. Both arms always populate it, so the optionality is dead in practice.",
+      "missing_clause": "State when declared_count may be omitted from a receipt, or make it required and delete the optionality.",
+      "found_by": "writing"
+    }
+  },
+  "dispatch_return": {
+    "state": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause",
+      "note": "Three-value enum with defined meanings. B-1 lives here."
+    },
+    "dispatch_key": {
+      "verdict": "MUST_MATCH",
+      "basis": "contract_clause"
+    },
+    "receipt": {
+      "verdict": "MUST_MATCH",
+      "basis": "unwritten_clause",
+      "note": "Optional in the schema. Both arms attach it to digest and count refusals and omit it on pre-observation refusals, which is convergence without a rule.",
+      "missing_clause": "State when a dispatch_return MUST carry the receipt.",
+      "found_by": "writing"
+    },
+    "pending_ref": {
+      "verdict": "FREE",
+      "basis": "unwritten_clause",
+      "note": "C-4. VALUE is FREE because pending_ref echoes receipt_id, which is itself FREE. PRESENCE is the contract question: the reference includes pending_ref on digest and count refusals, the Codex arm omits it, so the audit link back to the ledger row exists in one arm and not the other for the identical event. Conflating these two was a defect in the FIRST draft of this relation, found by running it: every single case reported a pending_ref divergence because two uuids are never equal. A relation that fires on everything is worth exactly as much as one that fires on nothing.",
+      "missing_clause": "State whether a REFUSED return that has a receipt must also carry pending_ref.",
+      "found_by": "running (the relation's own defect)",
+      "presence": "UNWRITTEN"
+    },
+    "reason": {
+      "verdict": "UNWRITTEN",
+      "basis": "unwritten_clause",
+      "note": "C-5. Nothing binds reason to refusal_vocabulary. The Codex arm emits bare vocabulary terms; the reference emits 'term: detail' when it has detail, so a consumer cannot match on it. Compared under the 'vocabulary_prefix' rule below rather than by equality, which is itself an admission the contract is underspecified.",
+      "missing_clause": "Bind dispatch_return.reason to refusal_vocabulary, and put human detail in a separate field.",
+      "found_by": "nxb-009"
+    },
+    "dispatch_status": {
+      "verdict": "UNWRITTEN",
+      "basis": "unwritten_clause",
+      "note": "Optional, enum DID_NOT_HAPPEN|UNKNOWN. Nothing says when it must be present or which state it pairs with.",
+      "missing_clause": "State the required pairing of state and dispatch_status.",
+      "found_by": "writing"
+    }
+  },
+  "process": {
+    "exit_code": {
+      "verdict": "UNWRITTEN",
+      "basis": "unwritten_clause",
+      "note": "C-2. The reference maps OBSERVED/REFUSED/UNKNOWN to 0/3/4, deliberately avoiding 1. The Codex arm never calls sys.exit, so every outcome exits 0 and a shell caller cannot tell an accepted dispatch from a refused one.",
+      "missing_clause": "The contract has no exit-code convention at all. It needs one, because H2 spawns cross a process boundary.",
+      "found_by": "nxb-009"
+    },
+    "raises": {
+      "verdict": "MUST_MATCH",
+      "basis": "unwritten_clause",
+      "note": "Whether a given input makes the broker RAISE rather than return one of the three shapes. The spec says the call always returns within a bounded budget and never raises; the contract data says nothing. An input that crashes one arm and is refused by another is a divergence the three-state model cannot express.",
+      "missing_clause": "State that dispatch is total: every input yields one of the three shapes, never an exception.",
+      "found_by": "writing"
+    }
+  },
+  "comparison_rules": {
+    "vocabulary_prefix": "A reason matches if both values are equal, or if both share the same leading refusal_vocabulary term before the first ': '. Applied only to dispatch_return.reason, and only because the contract fails to bind that field.",
+    "free_fields_are_checked_for_presence": "A FREE field must still be PRESENT in both arms if it is present in either. Freedom is about the value, never about existence.",
+    "value_free_presence_bound": "Where an entry carries BOTH `verdict` and `presence`, the value is compared under `verdict` and the presence under `presence`. pending_ref is the case that forced this distinction."
+  }
+}
