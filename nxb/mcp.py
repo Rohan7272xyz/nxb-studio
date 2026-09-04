@@ -20,9 +20,11 @@ told two months of orchestrators a local adapter was validating their
 directives, and that sentence was false the whole time. As an MCP tool,
 dispatching costs what SendMessage costs, and nobody has to be persuaded.
 
-This is a THIN WRAPPER over `nxb.run.run`, deliberately. Dispatch, receipts,
-the ledger, provenance, and the retry and divergence semantics are all proven
-there. Nothing here re-implements any of it.
+The dispatch tools are a THIN WRAPPER over `nxb.run.run`, deliberately.
+Dispatch, receipts, the ledger, provenance, and retry/divergence semantics are
+all proven there.  Studio draft tools are the other half of the same plug:
+they write the durable design model shared with the local page, but never cross
+the human launch gate.
 
 Protocol: JSON-RPC 2.0 over stdio, newline-delimited, standard library only,
 because the package has no runtime dependencies and adding one to speak a
@@ -38,16 +40,80 @@ from nxb.h4 import Outbox
 from nxb.ledger import Ledger
 from nxb.grants import DEFAULT_GRANT, GRANTS, describe
 from nxb.run import ADAPTERS, EXIT, run
+from nxb.studio_drafts import LAYOUTS, ROLES, RUNTIMES
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "nxb"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 
 #: The ledger every tool call uses. Required, absolute, and taken from the
 #: environment because an MCP tool call has no shell to pass a flag through.
 #: F3's rule survives the transport: there is NO DEFAULT, because a state
 #: location nobody chose is one two callers disagree about.
 LEDGER_ENV = "NXB_LEDGER"
+
+_AGENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string",
+                 "description": "Human-readable name unique inside the rig."},
+        "role": {"type": "string", "enum": list(ROLES),
+                 "description": "At most one agent may be orchestrator."},
+        "runtime": {"type": "string", "enum": list(RUNTIMES),
+                    "description": "Installed worker runtime/provider."},
+        "model": {"type": "string",
+                  "description": "Optional runtime model; omit for its default."},
+        "effort": {"type": "string",
+                   "description": "Optional reasoning effort; omit for default."},
+        "working_directory": {
+            "type": "string",
+            "description": "Optional per-agent directory; falls back to the rig."},
+        "instructions": {
+            "type": "string",
+            "description": "Optional standing role/startup instructions."},
+        "node_id": {
+            "type": "integer", "minimum": 1,
+            "description": ("Stable canvas identity. Omit on create; preserve "
+                            "the value returned by get when updating.")},
+        "x": {"type": "number",
+              "description": "Optional canvas x; NXB auto-lays out when omitted."},
+        "y": {"type": "number",
+              "description": "Optional canvas y; NXB auto-lays out when omitted."},
+    },
+    "required": ["name", "role", "runtime"],
+    "additionalProperties": False,
+}
+
+_DRAFT_PROPERTIES = {
+    "session": {
+        "type": "string",
+        "description": ("Future tmux session and Studio tab name. No spaces, "
+                        "colons, dots, dollar signs, quotes or backslashes."),
+    },
+    "working_directory": {
+        "type": "string",
+        "description": "Default working directory for the whole rig.",
+    },
+    "layout": {
+        "type": "string", "enum": list(LAYOUTS),
+        "default": "main-horizontal",
+        "description": "The tmux pane layout; canvas coordinates are visual only.",
+    },
+    "agents": {
+        "type": "array", "minItems": 1, "items": _AGENT_SCHEMA,
+        "description": "The complete fleet. Each entry becomes one Studio node.",
+    },
+    "view": {
+        "type": "object",
+        "properties": {
+            "zoom": {"type": "number"}, "x": {"type": "number"},
+            "y": {"type": "number"},
+        },
+        "additionalProperties": False,
+        "description": "Optional persisted canvas viewport returned by get.",
+    },
+}
+
 
 _TOOLS = [
     {
@@ -99,6 +165,86 @@ _TOOLS = [
                         "count is reported explicitly."),
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "nxb_studio_catalog",
+        "description": (
+            "Read the local Studio design vocabulary before composing a fleet: "
+            "installed runtimes, models, reasoning efforts, layouts and saved "
+            "personas. Read-only and never launches agents."),
+        "inputSchema": {"type": "object", "properties": {},
+                        "additionalProperties": False},
+    },
+    {
+        "name": "nxb_studio_draft_list",
+        "description": (
+            "List durable NXB Studio drafts with ids, revisions and fleet "
+            "summaries. Read-only; use nxb_studio_draft_get for the full graph."),
+        "inputSchema": {"type": "object", "properties": {},
+                        "additionalProperties": False},
+    },
+    {
+        "name": "nxb_studio_draft_get",
+        "description": (
+            "Read one complete Studio draft, including every agent and its "
+            "revision. Read before updating so newer human/model edits cannot "
+            "be overwritten."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"draft_id": {"type": "string"}},
+            "required": ["draft_id"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_studio_draft_validate",
+        "description": (
+            "Validate a complete fleet idea without saving or launching it. "
+            "Checks the same structural invariants used at launch and reports "
+            "missing local directories as warnings."),
+        "inputSchema": {
+            "type": "object", "properties": _DRAFT_PROPERTIES,
+            "required": ["session", "working_directory", "agents"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_studio_draft_save",
+        "description": (
+            "Create or replace a COMPLETE durable Studio workflow in one call. "
+            "It appears in an open Studio window on refresh and DOES NOT launch "
+            "agents. Omit draft_id to create. To replace, first read the draft "
+            "and pass both draft_id and expected_revision; stale edits are "
+            "refused."),
+        "inputSchema": {
+            "type": "object",
+            "properties": dict(_DRAFT_PROPERTIES, **{
+                "draft_id": {
+                    "type": "string",
+                    "description": "Omit to create; provide to replace."},
+                "expected_revision": {
+                    "type": "integer", "minimum": 1,
+                    "description": "Required with draft_id; use the revision read."},
+            }),
+            "required": ["session", "working_directory", "agents"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_studio_draft_delete",
+        "description": (
+            "Remove a Studio draft only when the user asked to discard it. "
+            "Requires the revision just read, never touches a running rig, and "
+            "moves the JSON file to recoverable local trash rather than erasing "
+            "it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {"type": "string"},
+                "expected_revision": {"type": "integer", "minimum": 1},
+            },
+            "required": ["draft_id", "expected_revision"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -123,6 +269,17 @@ def _ledger_path():
 def _text(payload):
     body = payload if isinstance(payload, str) else json.dumps(payload, indent=2)
     return {"content": [{"type": "text", "text": body}]}
+
+
+def _public_draft(record):
+    """MCP shape, excluding Studio-owned liveness stamps."""
+    out = dict(record)
+    out["agents"] = []
+    for raw in record.get("agents", []):
+        agent = dict(raw)
+        agent.pop("deployed_name", None)
+        out["agents"].append(agent)
+    return out
 
 
 def call_tool(name, args):
@@ -170,6 +327,73 @@ def call_tool(name, args):
             return _text({"uncollected": len(rows), "outcomes": rows})
         finally:
             led.close()
+
+    if name == "nxb_studio_catalog":
+        from nxb.studio import Studio
+        from nxb.studio_drafts import SCHEMA_VERSION
+
+        studio = Studio(ledger_path)
+        return _text({
+            "schema_version": SCHEMA_VERSION,
+            "runtimes": studio.models(),
+            "roles": list(ROLES),
+            "layouts": list(LAYOUTS),
+            "personas": studio.personas()["personas"],
+            "launch": ("Draft tools design Studio workflows only. Launch remains "
+                       "behind the operator's Bring it to life action in Studio."),
+        })
+
+    if name == "nxb_studio_draft_list":
+        from nxb.studio_drafts import list_drafts
+
+        drafts = list_drafts(ledger_path)
+        return _text({"count": len(drafts), "drafts": [
+            {"draft_id": d["draft_id"], "revision": d["revision"],
+             "session": d["session"], "working_directory":
+             d["working_directory"], "layout": d["layout"],
+             "agents": len(d["agents"]), "updated_at": d["updated_at"],
+             "updated_by": d["updated_by"]}
+            for d in drafts
+        ]})
+
+    if name == "nxb_studio_draft_get":
+        from nxb.studio_drafts import DraftError, get_draft
+
+        try:
+            return _text(_public_draft(
+                get_draft(ledger_path, args.get("draft_id"))))
+        except DraftError as exc:
+            raise ToolError(str(exc)) from exc
+
+    if name in ("nxb_studio_draft_validate", "nxb_studio_draft_save"):
+        from nxb.studio_drafts import (DraftError, save_draft,
+                                       validate as validate_draft)
+
+        spec = {key: args.get(key) for key in
+                ("session", "working_directory", "layout", "agents", "view")
+                if args.get(key) is not None}
+        try:
+            if name == "nxb_studio_draft_validate":
+                return _text(validate_draft(spec))
+            record = save_draft(
+                ledger_path, spec, draft_id=args.get("draft_id"),
+                expected_revision=args.get("expected_revision"), source="mcp",
+                strict=True)
+            return _text({"state": "SAVED", "launched": False,
+                          "draft": _public_draft(record),
+                          "next": "Review it in Studio; launch remains a human action."})
+        except DraftError as exc:
+            raise ToolError(str(exc)) from exc
+
+    if name == "nxb_studio_draft_delete":
+        from nxb.studio_drafts import DraftError, delete_draft
+
+        try:
+            return _text(delete_draft(
+                ledger_path, args.get("draft_id"),
+                expected_revision=args.get("expected_revision")))
+        except DraftError as exc:
+            raise ToolError(str(exc)) from exc
 
     raise ToolError(f"unknown tool {name!r}")
 

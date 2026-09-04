@@ -142,6 +142,144 @@ class ReadinessIsAMarkerNeverASleep(unittest.TestCase):
                 "Ask Codex to do anything")
         self.assertEqual(self._state(both, "codex"), rig.RIG_TRUST_PROMPT)
 
+    def test_the_repository_root_is_read_from_a_wrapped_trust_prompt(self):
+        screen = ("You are in /Users/rohan/ht-busy-ios\n"
+                  "Note: You are in a subdirectory. Trusting will apply to "
+                  "the repository roo\n"
+                  "t: /Users/rohan/hokie-transit\n\n"
+                  "Do you trust the contents of this directory?")
+        self.assertEqual(rig.trust_scope(screen),
+                         "/Users/rohan/hokie-transit")
+
+
+class TrustRecoveryPressesOnlyTheTrustChoice(unittest.TestCase):
+    def _record(self, ledger, panes):
+        from nxb.keystroke import save_rig
+        save_rig(ledger, "release", {"session": "release", "panes": panes})
+
+    def _run(self, ledger, states):
+        sent = []
+        real = {"which": rig.shutil.which, "tmux": rig._tmux,
+                "live": rig._live_panes, "state": rig.pane_state,
+                "capture": rig.capture}
+        rig.shutil.which = lambda name: "/opt/homebrew/bin/tmux"
+        rig._live_panes = lambda session: set(states)
+
+        def pane_state(pane, runtime):
+            values = states[pane]
+            return values.pop(0) if len(values) > 1 else values[0]
+
+        def tmux(*args, **kwargs):
+            if args and args[0] == "send-keys":
+                sent.append(args)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        rig.pane_state = pane_state
+        rig.capture = lambda pane: (
+            "repository root: /work/project Do you trust the contents of "
+            "this directory?")
+        rig._tmux = tmux
+        try:
+            result = rig.accept_trust_prompts(
+                "release", ledger=ledger, deadline=.2, poll=.01)
+        finally:
+            rig.shutil.which = real["which"]
+            rig._tmux = real["tmux"]
+            rig._live_panes = real["live"]
+            rig.pane_state = real["state"]
+            rig.capture = real["capture"]
+        return result, sent
+
+    def test_enter_is_sent_only_to_verified_trust_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "l.db")
+            self._record(ledger, [
+                {"name": "release Lead", "runtime": "codex", "role": "worker",
+                 "pane": "%1"},
+                {"name": "release Ready", "runtime": "claude_code",
+                 "role": "worker", "pane": "%2"},
+                {"name": "release Audit", "runtime": "codex", "role": "worker",
+                 "pane": "%3"}])
+            result, sent = self._run(ledger, {
+                "%1": [rig.RIG_TRUST_PROMPT, rig.RIG_TRUST_PROMPT, "READY"],
+                "%2": ["READY"],
+                "%3": [rig.RIG_TRUST_PROMPT, rig.RIG_TRUST_PROMPT, "READY"]})
+        self.assertEqual(result["state"], "TRUST_ACCEPTED")
+        self.assertEqual(sent, [
+            ("send-keys", "-t", "%1", "Enter"),
+            ("send-keys", "-t", "%3", "Enter")])
+
+    def test_a_mixed_prompt_sends_no_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "l.db")
+            self._record(ledger, [
+                {"name": "release Trust", "runtime": "codex", "role": "worker",
+                 "pane": "%1"},
+                {"name": "release Update", "runtime": "codex", "role": "worker",
+                 "pane": "%2"}])
+            result, sent = self._run(ledger, {
+                "%1": [rig.RIG_TRUST_PROMPT],
+                "%2": [rig.RIG_UPDATE_PROMPT]})
+        self.assertEqual(result["state"], "REFUSED")
+        self.assertEqual(sent, [])
+
+    def test_a_stale_click_sends_no_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "l.db")
+            self._record(ledger, [
+                {"name": "release Lead", "runtime": "codex", "role": "worker",
+                 "pane": "%1"}])
+            result, sent = self._run(ledger, {
+                "%1": [rig.RIG_TRUST_PROMPT, "READY"]})
+        self.assertEqual(result["state"], "REFUSED")
+        self.assertIn("changed", result["detail"])
+        self.assertEqual(sent, [])
+
+    def test_hook_approval_selects_exactly_option_two_before_submitting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "l.db")
+            self._record(ledger, [
+                {"name": "release Lead", "runtime": "codex", "role": "worker",
+                 "pane": "%1"},
+                {"name": "release Ready", "runtime": "claude_code",
+                 "role": "worker", "pane": "%2"}])
+            sent, selected, approved = [], {"%1": 1}, set()
+            real = {"which": rig.shutil.which, "tmux": rig._tmux,
+                    "live": rig._live_panes, "state": rig.pane_state,
+                    "capture": rig.capture}
+            rig.shutil.which = lambda name: "/opt/homebrew/bin/tmux"
+            rig._live_panes = lambda session: {"%1", "%2"}
+            rig.pane_state = lambda pane, runtime: (
+                "READY" if pane == "%2" or pane in approved
+                else rig.RIG_HOOKS_REVIEW)
+            rig.capture = lambda pane: (
+                f"Hooks need review\n› {selected[pane]}. "
+                f"{'Trust all and continue' if selected[pane] == 2 else 'Review hooks'}")
+
+            def tmux(*args, **kwargs):
+                if args and args[0] == "send-keys":
+                    sent.append(args)
+                    if args[-1] == "Down":
+                        selected[args[2]] = 2
+                    elif args[-1] == "Enter":
+                        approved.add(args[2])
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            rig._tmux = tmux
+            try:
+                result = rig.accept_hook_prompts(
+                    "release", ledger=ledger, deadline=.2, poll=.01)
+            finally:
+                rig.shutil.which = real["which"]
+                rig._tmux = real["tmux"]
+                rig._live_panes = real["live"]
+                rig.pane_state = real["state"]
+                rig.capture = real["capture"]
+        self.assertEqual(result["state"], "HOOKS_APPROVED")
+        self.assertEqual(sent, [
+            ("send-keys", "-t", "%1", "Down"),
+            ("send-keys", "-t", "%1", "Enter")])
+
 
 class TheThreadIdIsTheAddress(unittest.TestCase):
     CONFIRM = ("• Session renamed to CX Worker 1. To resume this session run "
@@ -379,6 +517,28 @@ class TmuxTargetFormsAreREAL(unittest.TestCase):
         self.assertEqual(listed.returncode, 0)
         self.assertEqual(len(listed.stdout.split()), 2)
 
+    def test_many_panes_fit_because_the_layout_is_applied_AS_IT_GOES(self):
+        """RIG-21. Each split halves the pane it lands in, so splitting
+        without redistributing runs out of room. MEASURED on a real 240x60
+        window with no runtimes involved: 5 panes without a layout between
+        splits, 15 with. The rig had an undocumented ceiling of about six
+        agents and announced it as a bare tmux string."""
+        session = "nxb-splittest"
+        self._run("kill-session", "-t", f"={session}")
+        made = self._run("new-session", "-d", "-s", session, "-x", "240",
+                         "-y", "60")
+        if made.returncode != 0:
+            self.skipTest("could not create a tmux session")
+        self.addCleanup(self._run, "kill-session", "-t", f"={session}")
+        for _ in range(10):
+            split = self._run("split-window", "-t", f"={session}:")
+            self.assertEqual(split.returncode, 0,
+                             f"ran out of room: {split.stderr.strip()}")
+            self._run("select-layout", "-t", f"={session}:", "tiled")
+        panes = self._run("list-panes", "-t", f"={session}",
+                          "-F", "#{pane_id}").stdout.split()
+        self.assertEqual(len(panes), 11)
+
     def test_a_TORN_DOWN_rig_has_no_workers_and_is_not_an_error(self):
         """RIG-14. nxb-055 made an unaskable tmux loud, and swept a legitimate
         answer in with it: a rig torn down hours earlier has no panes, which
@@ -449,4 +609,3 @@ class ANameCarriesItsRig(unittest.TestCase):
         import inspect
         src = inspect.getsource(rig.stand_up)
         self.assertIn("scoped_name(session", src)
-

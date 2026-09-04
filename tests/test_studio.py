@@ -68,6 +68,12 @@ class StudioServed(unittest.TestCase):
                 self.assertEqual(self._get(path, token=False)[0], 403)
         self.assertEqual(
             self._post("/api/rig/up", {"session": "x"}, token=False)[0], 403)
+        self.assertEqual(self._post(
+            "/api/rig/trust-and-retry", {"session": "x"},
+            token=False)[0], 403)
+        self.assertEqual(self._post(
+            "/api/rig/hooks-and-retry", {"session": "x"},
+            token=False)[0], 403)
 
     def test_the_PAGE_needs_the_token_too(self):
         """The page carries the token to the browser, so serving it to an
@@ -98,6 +104,19 @@ class StudioServed(unittest.TestCase):
                          "the network")
         self.assertIn("127.0.0.1", LOOPBACK)
 
+    def test_foreground_command_opens_an_existing_service_without_binding(self):
+        import nxb.studio_service as service
+        from nxb.studio import serve
+
+        real = service.status
+        service.status = lambda port: {"state": "RUNNING"}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                code = serve(os.path.join(tmp, "l.db"), open_browser=False)
+        finally:
+            service.status = real
+        self.assertEqual(code, 0)
+
     # ------------------------------------------------------------- routes
     def test_the_page_is_served_with_the_token_substituted(self):
         code, body = self._get("/")
@@ -111,6 +130,33 @@ class StudioServed(unittest.TestCase):
         code, body = self._get("/api/state")
         self.assertEqual(code, 200)
         self.assertIn("rigs", json.loads(body))
+
+    def test_drafts_are_shared_through_the_guarded_http_surface(self):
+        draft_id = "http-shared-draft"
+        payload = {
+            "draft_id": draft_id, "expected_revision": 0,
+            "draft": {"session": "http-shared", "working_directory": "~",
+                      "agents": [{"name": "Builder", "role": "worker",
+                                  "runtime": "codex"}]},
+        }
+        code, saved = self._post("/api/drafts/save", payload)
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["draft"]["revision"], 1)
+        code, body = self._get("/api/drafts")
+        self.assertEqual(code, 200)
+        records = json.loads(body)["drafts"]
+        self.assertIn(draft_id, {d["draft_id"] for d in records})
+
+        stale = dict(payload, expected_revision=0)
+        self.assertEqual(self._post("/api/drafts/save", stale)[0], 409)
+        code, deleted = self._post("/api/drafts/delete", {
+            "draft_id": draft_id, "expected_revision": 1})
+        self.assertEqual(code, 200)
+        self.assertEqual(deleted["state"], "TRASHED")
+
+    def test_draft_routes_require_the_same_token_as_launch(self):
+        self.assertEqual(self._get("/api/drafts", token=False)[0], 403)
+        self.assertEqual(self._post("/api/drafts/save", {}, token=False)[0], 403)
 
     def test_the_page_scripts_parse(self):
         """A page that fails to parse renders a dead canvas and says nothing.
@@ -143,6 +189,144 @@ class StudioServed(unittest.TestCase):
         _, body = self._get("/")
         self.assertIn(b"window.onerror", body)
         self.assertIn(b"onunhandledrejection", body)
+
+    def test_a_trust_prompt_is_a_setup_card_not_a_raw_json_error(self):
+        _, body = self._get("/")
+        self.assertIn(b'id="recovery"', body)
+        self.assertIn(b"Repository trust needed", body)
+        self.assertIn(b"Nothing is broken", body)
+        self.assertIn(b"Trust repository &amp; retry", body)
+        self.assertIn(b"/api/rig/trust-and-retry", body)
+        self.assertIn(b"/api/rig/hooks-and-retry", body)
+        self.assertIn(b"I reviewed them", body)
+        self.assertIn(b"Hooks can execute outside the sandbox", body)
+        self.assertIn(b"configuration, hooks, and execution policies", body)
+        self.assertIn(b"showLaunchFailure(t, e)", body)
+
+    def test_the_trust_route_validates_before_touching_a_rig(self):
+        code, body = self._post("/api/rig/trust-and-retry", {
+            "session": "bad name", "dir": "~", "agents": [
+                {"name": "Worker", "runtime": "codex"}]})
+        self.assertEqual(code, 400)
+        self.assertIn("session name", body["error"])
+
+    def test_state_exposes_a_live_trust_prompt_after_page_reload(self):
+        import types
+
+        import nxb.rig as rig
+        from nxb.keystroke import save_rig
+        from nxb.studio import Studio
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "l.db")
+            save_rig(ledger, "release", {"session": "release", "panes": [{
+                "name": "release Worker", "runtime": "codex",
+                "role": "worker", "pane": "%1"}]})
+            real_live = rig.live_rig_sessions
+            real_roster = rig.rig_roster
+            real_state = rig.pane_state
+            real_capture = rig.capture
+            rig.live_rig_sessions = lambda path: ["release"]
+            rig.rig_roster = lambda path, session: types.SimpleNamespace(
+                named=[types.SimpleNamespace(name="release Worker")])
+            rig.pane_state = lambda pane, runtime: rig.RIG_TRUST_PROMPT
+            rig.capture = lambda pane: (
+                "repository root: /work/project Do you trust the contents "
+                "of this directory?")
+            try:
+                state = Studio(ledger).state()
+            finally:
+                rig.live_rig_sessions = real_live
+                rig.rig_roster = real_roster
+                rig.pane_state = real_state
+                rig.capture = real_capture
+        pane = state["rigs"][0]["panes"][0]
+        self.assertEqual(pane["reason"], "rig_trust_prompt")
+        self.assertEqual(pane["trust_scope"], "/work/project")
+
+    def test_trust_recovery_restarts_only_after_verified_acceptance(self):
+        import nxb.rig as rig
+        from nxb.studio import Studio
+
+        calls = []
+        real_accept = rig.accept_trust_prompts
+        real_down = rig.tear_down
+        real_up = rig.stand_up
+        rig.accept_trust_prompts = lambda session, ledger: (
+            calls.append(("trust", session)) or
+            {"state": "TRUST_ACCEPTED", "session": session,
+             "accepted": ["%1"], "panes": []})
+        rig.tear_down = lambda session: (
+            calls.append(("down", session)) or
+            {"state": "GONE", "session": session})
+        rig.stand_up = lambda plan, session, work_dir, ledger: (
+            calls.append(("up", session)) or
+            {"state": "READY", "session": session,
+             "panes": [{"name": f"{session} Worker"}]})
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                code, body = Studio(os.path.join(tmp, "l.db")).trust_and_retry({
+                    "session": "release", "dir": tmp,
+                    "agents": [{"name": "Worker", "runtime": "codex"}]})
+        finally:
+            rig.accept_trust_prompts = real_accept
+            rig.tear_down = real_down
+            rig.stand_up = real_up
+        self.assertEqual(code, 200)
+        self.assertEqual([kind for kind, _ in calls], ["trust", "down", "up"])
+        self.assertEqual({session for _, session in calls}, {"release"})
+        self.assertEqual(body["trust_recovery"]["accepted"], ["%1"])
+
+    def test_failed_trust_verification_does_not_restart(self):
+        import nxb.rig as rig
+        from nxb.studio import Studio
+
+        real_accept = rig.accept_trust_prompts
+        real_down = rig.tear_down
+        down = []
+        rig.accept_trust_prompts = lambda session, ledger: {
+            "state": "REFUSED", "reason": "rig_pane_not_ready",
+            "detail": "prompt changed"}
+        rig.tear_down = lambda session: down.append(session)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                code, _ = Studio(os.path.join(tmp, "l.db")).trust_and_retry({
+                    "session": "release", "dir": tmp,
+                    "agents": [{"name": "Worker", "runtime": "codex"}]})
+        finally:
+            rig.accept_trust_prompts = real_accept
+            rig.tear_down = real_down
+        self.assertEqual(code, 409)
+        self.assertEqual(down, [])
+
+    def test_the_canvas_and_mcp_share_durable_drafts(self):
+        _, body = self._get("/")
+        self.assertIn(b'/api/drafts/save', body)
+        self.assertIn(b'/api/drafts/delete', body)
+        self.assertIn(b'async function syncDrafts', body)
+        self.assertIn(b'setInterval(()=>{ refresh(); syncDrafts(); }, 5000)',
+                      body, "an MCP-created workflow must appear without a reload")
+        self.assertIn(b'expected_revision:t._revision||0', body,
+                      "a browser edit must not overwrite a newer MCP revision")
+        self.assertIn(b't._conflict = true', body)
+
+    def test_mcp_authored_draft_text_is_rendered_as_DATA_not_html(self):
+        """An external model can write names and startup prose. A closing
+        textarea or event attribute in that data must stay visible text, never
+        become script holding the Studio token."""
+        _, body = self._get("/")
+        self.assertIn(b"const esc = value =>", body)
+        for rendered in (b'${esc(t.name)}</span>', b'${esc(n.name)}</span>',
+                         b'${esc(n.instructions||"")}</textarea>',
+                         b'${esc(n.dir||"")}\">'):
+            with self.subTest(rendered=rendered):
+                self.assertIn(rendered, body)
+
+    def test_localstorage_remains_a_cache_and_migration_source(self):
+        _, body = self._get("/")
+        self.assertIn(b'localStorage.getItem(STORE)', body)
+        self.assertIn(b'migrates pre-server localStorage drafts', body)
+        self.assertIn(b'The untouched placeholder is UI chrome', body)
 
     def test_the_manifest_and_icon_carry_the_token_in_the_URL(self):
         """A browser fetches a manifest and its icons WITHOUT custom headers,
@@ -195,10 +379,45 @@ class StudioServed(unittest.TestCase):
             with self.subTest(rt=rt):
                 self.assertTrue(cat[rt]["efforts"])
 
-    def test_the_model_fields_are_free_text_not_a_closed_picker(self):
+    def test_the_model_fields_are_PICKERS_read_from_the_CLIs(self):
+        """REVERSES the earlier assertion that these must be free text.
+
+        That was right for the reason it was written -- a closed list typed
+        from memory had offered a model the API refused -- and wrong about the
+        remedy. Rohan: "a drop down means i have to select something." A typo
+        reaches the runtime and fails in a pane minutes later; a picker cannot
+        be mistyped. The real fix was never free text, it was READING the
+        options instead of inventing them, and now they come out of each
+        installed CLI's own catalog."""
         _, body = self._get("/")
-        self.assertIn(b'id="fModel" list="dlM"', body)
-        self.assertIn(b'id="fEffort" list="dlE"', body)
+        # The inspector is rendered client-side, so the assertion is on the
+        # code that builds it rather than on the served markup.
+        self.assertIn(b'return `<select id="${id}">`', body)
+        self.assertIn(b'picker("fModel"', body)
+        self.assertIn(b'picker("fEffort"', body)
+        self.assertNotIn(b'id="fModel" list=', body, "no free-text fallback")
+        # A select commits in one act, so it must be wired as a choice.
+        self.assertIn(b'choice("fModel","model"); choice("fEffort","effort")',
+                      body)
+        cat = json.loads(self._get("/api/models")[1])
+        # Read, not written: these came from the binaries on this machine.
+        self.assertTrue(cat["claude_code"]["models"])
+        self.assertTrue(cat["codex"]["models"])
+        for rt in ("claude_code", "codex"):
+            with self.subTest(rt=rt):
+                configured = cat["_configured"][rt].get("model")
+                if configured:
+                    # The one model PROVEN to work here leads the list, and is
+                    # never dropped by a catalog scrape that missed it.
+                    self.assertEqual(cat[rt]["models"][0], configured)
+
+    def test_a_model_not_in_the_catalog_is_still_offered_if_already_set(self):
+        """Opening an older design must not silently rewrite what it asked
+        for. A picker that drops an unknown value changes the fleet without
+        saying so."""
+        _, body = self._get("/")
+        self.assertIn(b"if(value && !opts.includes(value)) opts.unshift(value)",
+                      body)
 
     def test_composed_agents_reach_the_runtime_flags(self):
         """Every control in the inspector must land on a real flag, or it is

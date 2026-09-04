@@ -191,8 +191,20 @@ def main(argv=None):
                     help="count only this rig session's workers (default: "
                          "every rig recorded next to the ledger)")
 
+    dr = sub.add_parser(
+        "doctor", help="check every assumption nxb makes about the runtimes")
+    dr.add_argument("--deep", action="store_true",
+                    help="also check the /usage wording; costs one Claude turn")
+    dr.add_argument("--record", action="store_true",
+                    help="write the current runtime versions as verified")
+
     st = sub.add_parser(
         "studio", help="compose a fleet visually and stand it up (local page)")
+    st.add_argument("action", nargs="?", default="serve",
+                    choices=["serve", "install", "status", "restart",
+                             "uninstall"],
+                    help="serve in this terminal, or manage the always-on "
+                         "macOS user service")
     st.add_argument("--port", type=int, default=8787)
     st.add_argument("--no-open", action="store_true",
                     help="do not open a browser")
@@ -375,7 +387,33 @@ def main(argv=None):
         print(json.dumps(out, indent=2))
         return 0 if out["state"] == "READY" else 3
 
+    if args.cmd == "doctor":
+        from nxb.doctor import record, report
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if args.record:
+            print(json.dumps(record(root), indent=2))
+            return 0
+        return report(deep=args.deep, root=root)
+
     if args.cmd == "studio":
+        if args.action != "serve":
+            from nxb.studio_service import (StudioServiceError, install,
+                                            restart, status, uninstall)
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            try:
+                if args.action == "install":
+                    out = install(_ledger_from(args), root, port=args.port)
+                elif args.action == "restart":
+                    out = restart(port=args.port)
+                elif args.action == "uninstall":
+                    out = uninstall(port=args.port)
+                else:
+                    out = status(port=args.port)
+            except StudioServiceError as exc:
+                print(f"studio service: {exc}", file=sys.stderr)
+                return 3
+            print(json.dumps(out, indent=2))
+            return 0 if out.get("state") not in ("NOT_INSTALLED",) else 3
         from nxb.studio import serve
         return serve(_ledger_from(args), port=args.port,
                      open_browser=not args.no_open, app=args.app,

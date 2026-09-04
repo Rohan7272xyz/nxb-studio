@@ -224,6 +224,23 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
 #log.on{display:block}
 #log b{color:var(--faint);font-weight:400}
 #log .err{color:var(--bad)} #log .ok{color:var(--ok)}
+#recovery{display:flex;align-items:flex-start;gap:14px;padding:12px 16px;
+  flex:0 0 auto;border-top:1px solid #665021;background:#211d12;
+  color:#c8b985;font-size:11.5px;line-height:1.55}
+#recovery .mark{width:22px;height:22px;border:1px solid #806729;
+  border-radius:50%;display:grid;place-items:center;color:#e8c46a;
+  flex:0 0 auto;font-weight:700}
+#recovery .copy{flex:1;min-width:220px}
+#recovery .title{color:#f0dda0;font-weight:700;font-size:12.5px;
+  margin-bottom:2px}
+#recovery .security{color:var(--dim);margin-top:5px}
+#recovery .panes{color:#a99b73;margin-top:4px}
+#recovery .actions{display:flex;gap:8px;align-items:center;align-self:center;
+  flex-wrap:wrap}
+#recovery button{white-space:nowrap;background:#17140d;border-color:#665021}
+#recovery button.primary{background:#e8c46a;border-color:#e8c46a;
+  color:#17130a;font-weight:700}
+#recovery button.primary:hover{background:#f1d47f;color:#17130a}
 #status{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
   background:var(--panel);
   border-top:1px solid var(--edge);color:var(--dim);font-size:11.5px;
@@ -258,7 +275,7 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
   <div class="f"><label>dir</label><input id="dir" type="text" size="22"></div>
   <div class="seg" id="viewseg">
     <div class="on" data-m="topology">Topology</div>
-    <div data-m="panes">Pane preview</div>
+    <div data-m="panes" title="coming soon">Pane preview</div>
   </div>
   <select id="layout" style="width:auto"
     title="This decides the tmux pane arrangement. Node positions on the canvas are for your head only.">
@@ -282,11 +299,7 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
       <i></i>Claude</div>
     <div class="prov cx" draggable="true" data-role="worker" data-rt="codex">
       <i></i>Codex</div>
-    <p>Drag onto the canvas, or click to add. Drop a provider onto an existing
-       node to switch it.</p>
-    <p>Drag empty canvas to pan · scroll to pan · ⌘-scroll to zoom ·
-       space-drag anywhere · ⤢ fits everything · drag a divider to resize,
-       double-click it to reset.</p>
+
   </div>
 
   <div class="split" data-for="rail"></div>
@@ -314,6 +327,7 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
 </div>
 
 <div id="log"></div>
+<div id="recovery" hidden></div>
 <div id="status">
   <span id="stL"></span>
   <span class="sep">│</span>
@@ -328,6 +342,9 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
 const TOKEN = "__NXB_TOKEN__";
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const stage = $("#stage"), world = $("#world"), wires = document.querySelector("svg.wires");
+/* Drafts can arrive from any MCP model. They are DATA, never markup. */
+const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
+  "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
 
 /* Nothing fails silently: a page that renders an empty board and says nothing
    is indistinguishable from an empty design. */
@@ -337,14 +354,17 @@ function log(msg, cls){
     `<div class="${cls||""}"><b>${at}</b>  ${msg}</div>`);
   if(cls === "err") $("#log").classList.add("on");
 }
-window.onerror = (m,s,l) => log(`page error: ${m} (line ${l})`,"err");
-window.onunhandledrejection = e => log(`page error: ${e.reason}`,"err");
+window.onerror = (m,s,l) => log(`page error: ${esc(m)} (line ${l})`,"err");
+window.onunhandledrejection = e => log(`page error: ${esc(e.reason)}`,"err");
 
 async function api(path, opts){
   const r = await fetch(path, Object.assign({headers:{
     "X-NXB-Token": TOKEN, "Content-Type":"application/json"}}, opts||{}));
   const b = await r.json().catch(()=>({error:"unreadable reply"}));
-  if(!r.ok) throw new Error(b.error || b.detail || JSON.stringify(b));
+  if(!r.ok){
+    const e = new Error(b.error || b.detail || JSON.stringify(b));
+    e.status = r.status; e.body = b; throw e;
+  }
   return b;
 }
 
@@ -366,6 +386,7 @@ const PRETTY = {claude_code:"Claude", codex:"Codex"};
 /* ---- tabs --------------------------------------------------------------- */
 const STORE = "nxb.studio.v2";
 let tabs = [], active = 0, seq = 0, standing = {}, sel = null;
+let draftSyncReady = false, draftSaveTimer = null, draftSyncing = false;
 /* VIEW STATE, per tab and persisted. Without a pan, a node dragged past the
    right edge was simply unreachable: zoom was the only control and it is
    anchored at the origin, so zooming out did not always bring it back. */
@@ -379,7 +400,44 @@ function loadView(){ const v = view(); zoom = v.zoom; panX = v.x; panY = v.y; }
 function saveView(){ const v = view(); v.zoom = zoom; v.x = panX; v.y = panY;
   save(); }
 
-const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", nodes:[]});
+const newDraftId = () => (crypto.randomUUID ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", nodes:[],
+  _draftId:newDraftId(), _revision:0});
+
+/* The file shape is the MCP shape.  Translating at this one seam lets the
+   canvas keep its short, old property names without making every external
+   model learn browser implementation details. */
+function draftSpec(t){
+  return {session:t.name, working_directory:t.dir || "~",
+    layout:t.layout || "main-horizontal", view:t.view || {zoom:1,x:0,y:0},
+    agents:t.nodes.map(n=>{
+      const a = {node_id:n.id, name:n.name, role:n.role, runtime:n.runtime,
+        x:n.x, y:n.y};
+      if(n.model) a.model = n.model;
+      if(n.effort) a.effort = n.effort;
+      if(n.dir) a.working_directory = n.dir;
+      if(n.instructions) a.instructions = n.instructions;
+      if(n.deployed) a.deployed_name = n.deployed;
+      return a;
+    })};
+}
+function tabFromDraft(d){
+  const t = {name:d.session, dir:d.working_directory || "~",
+    layout:d.layout || "main-horizontal", view:d.view || {zoom:1,x:0,y:0},
+    nodes:(d.agents||[]).map(a=>({id:a.node_id, name:a.name, role:a.role,
+      runtime:a.runtime, model:a.model||"", effort:a.effort||"",
+      dir:a.working_directory||"", instructions:a.instructions||"",
+      deployed:a.deployed_name||undefined, x:a.x, y:a.y})),
+    _draftId:d.draft_id, _revision:d.revision||0};
+  t._synced = JSON.stringify(draftSpec(t));
+  return t;
+}
+const ensureTab = t => {
+  if(!t._draftId) t._draftId = newDraftId();
+  if(!Number.isInteger(t._revision)) t._revision = 0;
+  return t;
+};
 
 /* ---- undo. Snapshots of the whole draft, taken BEFORE each discrete act.
    Text fields snapshot on FOCUS rather than per keystroke: an undo that walks
@@ -409,28 +467,130 @@ function load(){
   try{
     const raw = JSON.parse(localStorage.getItem(STORE) || "null");
     if(raw && Array.isArray(raw.tabs) && raw.tabs.length){
-      tabs = raw.tabs; active = Math.min(raw.active||0, tabs.length-1);
+      tabs = raw.tabs.map(ensureTab);
+      active = Math.min(raw.active||0, tabs.length-1);
       seq = Math.max(0, ...tabs.flatMap(t=>t.nodes.map(n=>n.id)));
       return;
     }
   }catch(e){ /* a corrupt draft must not stop the page loading */ }
   tabs = [blank(1)];
 }
-const save = () => { try{ localStorage.setItem(STORE,
-  JSON.stringify({tabs,active})); }catch(e){} };
+function saveLocal(){
+  try{
+    const clean = tabs.map(t=>{
+      const c = Object.assign({}, t);
+      delete c._saving; delete c._conflict;
+      return c;
+    });
+    localStorage.setItem(STORE, JSON.stringify({tabs:clean,active}));
+  }catch(e){}
+}
+function queueDraftSave(){
+  if(!draftSyncReady) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(persistChangedDrafts, 180);
+}
+const save = () => { saveLocal(); queueDraftSave(); };
 const tab = () => tabs[active];
+
+async function persistDraft(t){
+  ensureTab(t);
+  // The untouched placeholder is UI chrome, not a workflow.  Do not make
+  // every fresh browser profile publish an empty rig to MCP clients.
+  if(!t._revision && !t.nodes.length && /^rig\d+$/.test(t.name)
+      && (t.dir||"~")==="~" && (t.layout||"main-horizontal")==="main-horizontal")
+    return;
+  const spec = draftSpec(t), signature = JSON.stringify(spec);
+  if(t._saving || t._conflict || signature === t._synced) return;
+  t._saving = true;
+  try{
+    const r = await api("/api/drafts/save", {method:"POST", body:JSON.stringify({
+      draft_id:t._draftId, expected_revision:t._revision||0, draft:spec})});
+    t._revision = r.draft.revision; t._synced = signature;
+    saveLocal();
+  }catch(e){
+    if(e.status === 409){
+      t._conflict = true;
+      log(`<b>${esc(t.name)}</b> changed somewhere else. Reload Studio before editing `
+          + `it again; your local copy has not been overwritten.`, "err");
+    }else{
+      log(`could not save <b>${esc(t.name)}</b>: ${esc(e.message)}`, "err");
+    }
+  }finally{
+    t._saving = false;
+    if(!t._conflict && JSON.stringify(draftSpec(t)) !== t._synced)
+      queueDraftSave();
+  }
+}
+function persistChangedDrafts(){ tabs.forEach(t=>persistDraft(t)); }
+
+async function discardDraft(t){
+  if(!t._revision) return true;
+  try{
+    await api("/api/drafts/delete", {method:"POST", body:JSON.stringify({
+      draft_id:t._draftId, expected_revision:t._revision})});
+    return true;
+  }catch(e){
+    log(`could not close <b>${esc(t.name)}</b>: ${esc(e.message)}`, "err");
+    return false;
+  }
+}
+
+/* Pull MCP-created workflows into an already-open Studio.  A clean local tab
+   accepts a newer revision.  A locally edited tab never gets overwritten: the
+   revision conflict is left visible for the operator to resolve by reloading. */
+async function syncDrafts({initial=false} = {}){
+  if(draftSyncing) return;
+  draftSyncing = true;
+  try{
+    const incoming = (await api("/api/drafts")).drafts || [];
+    const pristine = tabs.length===1 && tabs[0].nodes.length===0
+      && !tabs[0]._revision;
+    if(initial && pristine && incoming.length) tabs = [];
+    const seen = new Set();
+    incoming.forEach(d=>{
+      seen.add(d.draft_id);
+      const i = tabs.findIndex(t=>t._draftId===d.draft_id);
+      if(i < 0){ tabs.push(tabFromDraft(d)); return; }
+      const local = tabs[i], changed = local._synced
+        && JSON.stringify(draftSpec(local)) !== local._synced;
+      if((d.revision||0) > (local._revision||0)){
+        if(changed || local._saving){
+          local._conflict = true;
+          log(`<b>${esc(local.name)}</b> has both local and external edits; reload `
+              + `to take the external revision.`, "err");
+        }else tabs[i] = tabFromDraft(d);
+      }
+    });
+    // A draft removed over MCP disappears only when this page has no unsaved
+    // edit.  Otherwise keeping the visible local copy is the lossless choice.
+    tabs = tabs.filter(t=>{
+      if(!t._revision || seen.has(t._draftId) || t._saving) return true;
+      const changed = t._synced && JSON.stringify(draftSpec(t)) !== t._synced;
+      return Boolean(changed);
+    });
+    if(!tabs.length) tabs = [blank(1)];
+    active = Math.min(active, tabs.length-1);
+    seq = Math.max(0, ...tabs.flatMap(t=>t.nodes.map(n=>n.id)));
+    draftSyncReady = true; saveLocal(); loadView(); paint();
+    queueDraftSave();               // migrates pre-server localStorage drafts
+  }catch(e){
+    if(initial) log(`durable drafts unavailable: ${esc(e.message)}`, "err");
+  }finally{ draftSyncing = false; }
+}
 
 function drawTabs(){
   const el = $("#tabs"); el.innerHTML = "";
   tabs.forEach((t,i)=>{
     const d = document.createElement("div");
     d.className = "tab"+(i===active?" on":"")+(standing[t.name]?" live":"");
-    d.innerHTML = `<span class="st"></span><span class="lbl">${t.name}</span>
+    d.innerHTML = `<span class="st"></span><span class="lbl">${esc(t.name)}</span>
                    <span class="cl" title="close">×</span>`;
-    d.onclick = e => {
+    d.onclick = async e => {
       if(e.target.classList.contains("cl")){
         e.stopPropagation();
         if(tabs.length===1) return log("the last tab stays","err");
+        if(!await discardDraft(t)) return;
         tabs.splice(i,1); active = Math.max(0, active-(i<=active?1:0));
       } else { active = i; sel = null; }
       loadView(); save(); paint();
@@ -493,18 +653,18 @@ function paintCanvas(){
     const drifted = live && n.deployed !== `${t.name} ${n.name}`;
     el.innerHTML =
       `<div class="hd"><span class="grip">⠿</span>
-         <span class="ttl">${n.name}</span>
+         <span class="ttl">${esc(n.name)}</span>
          <span class="chip${drifted?" drift":live?" live":""}"
-               title="${drifted?`running as ${n.deployed}; rebuild to apply the rename`:""}"
+               title="${drifted?`running as ${esc(n.deployed)}; rebuild to apply the rename`:""}"
          >${drifted?"edited":live?"live":"draft"}</span>
          <span class="dots" title="remove">⋮</span></div>
        ${n.role==="orchestrator"?'<div class="badge">ORCHESTRATOR</div>':""}
-       <div class="bd"><div class="rt"><i></i>${PRETTY[n.runtime]}</div>
-         <div class="mo">${n.model || CATALOG._configured?.[n.runtime]?.model
-            || "default model"}${
-            n.effort ? " · "+n.effort
+       <div class="bd"><div class="rt"><i></i>${esc(PRETTY[n.runtime])}</div>
+         <div class="mo">${esc(n.model || CATALOG._configured?.[n.runtime]?.model
+            || "default model")}${
+            n.effort ? " · "+esc(n.effort)
             : CATALOG._configured?.[n.runtime]?.effort
-              ? " · "+CATALOG._configured[n.runtime].effort : ""}${
+              ? " · "+esc(CATALOG._configured[n.runtime].effort) : ""}${
             n.model||n.effort ? "" : "  (default)"}</div>
        </div>
        <span class="port l"></span><span class="port r"></span>
@@ -566,9 +726,28 @@ function wire(){
 
 /* ---- inspector ---------------------------------------------------------- */
 function field(lbl, html){ return `<div class="fr"><label>${lbl}</label>${html}</div>`; }
-function datalist(id, list){
-  return `<datalist id="${id}">`
-    + list.map(o=>`<option value="${o}">`).join("") + `</datalist>`;
+/* A PICKER, NOT A TEXT BOX. Typed input means a typo reaches the runtime and
+   fails in a pane minutes later; a picker cannot be mistyped. It is only an
+   improvement if its options are right, so they are read from each installed
+   CLI's own catalog rather than written from memory -- the version that WAS
+   written from memory offered a model the API refused.
+   A value already set that is not in the catalog is kept as an option, so
+   opening an older design never silently rewrites what it asked for. */
+function picker(id, list, value, dflt){
+  const opts = [...list];
+  if(value && !opts.includes(value)) opts.unshift(value);
+  return `<select id="${id}">`
+    + `<option value=""${value?"":" selected"}>${
+        dflt ? `default · ${esc(dflt)}` : "runtime default"}</option>`
+    + opts.map(o=>`<option value="${esc(o)}"${o===value?" selected":""}>${esc(o)}${
+        o===dflt?"  (default)":""}</option>`).join("")
+    // THE ESCAPE HATCH, and it is not a hedge. The catalog is scraped from
+    // the installed binaries, so a model released this morning is invisible
+    // to it until someone widens a pattern. Without this the picker would be
+    // strictly WORSE than the text box it replaced on the day that matters
+    // most -- release day. Typing is the exception here, not the default.
+    + `<option value="__other__">other… (type a new model)</option>`
+    + `</select>`;
 }
 function inspector(){
   const n = sel ? node(sel) : null, box = $("#pinspector");
@@ -579,8 +758,8 @@ function inspector(){
       is decoration.</p>`;
     return;
   }
-  box.innerHTML = `<h4>${n.name}</h4>
-    ${field("Name", `<input id="fName" value="${n.name.replace(/"/g,"&quot;")}">`)}
+  box.innerHTML = `<h4>${esc(n.name)}</h4>
+    ${field("Name", `<input id="fName" value="${esc(n.name)}">`)}
     ${field("Role", `<select id="fRole">
       <option value="worker"${n.role==="worker"?" selected":""}>Worker</option>
       <option value="orchestrator"${n.role==="orchestrator"?" selected":""}>Orchestrator</option>
@@ -589,20 +768,18 @@ function inspector(){
       <option value="claude_code"${n.runtime==="claude_code"?" selected":""}>Claude</option>
       <option value="codex"${n.runtime==="codex"?" selected":""}>Codex</option>
       </select>`)}
-    ${field("Model", `<input id="fModel" list="dlM"
-        placeholder="${dflt(n.runtime,"model")}"
-        value="${n.model||""}">` + datalist("dlM", CATALOG[n.runtime].models))}
-    ${field("Reasoning", `<input id="fEffort" list="dlE"
-        placeholder="${dflt(n.runtime,"effort")}"
-        value="${n.effort||""}">` + datalist("dlE", CATALOG[n.runtime].efforts))}
-    ${field("Directory", `<input id="fDir" placeholder="(the rig's dir)" value="${n.dir||""}">`)}
+    ${field("Model", picker("fModel", CATALOG[n.runtime].models, n.model,
+        CATALOG._configured?.[n.runtime]?.model))}
+    ${field("Reasoning", picker("fEffort", CATALOG[n.runtime].efforts, n.effort,
+        CATALOG._configured?.[n.runtime]?.effort))}
+    ${field("Directory", `<input id="fDir" placeholder="(the rig's dir)" value="${esc(n.dir||"")}">`)}
     <div class="expander" id="fExp"><span>Role / startup instructions</span><span>›</span></div>
     <div id="roleBox" hidden>
       <div class="row2">
         <select id="pPick"><option value="">— apply a saved persona —</option></select>
         <button id="pSave" title="save this text as a reusable persona">save</button>
       </div>
-      <textarea id="instr" placeholder="e.g. Act as an adversarial auditor for audit Builder. Challenge every claim.">${n.instructions||""}</textarea>
+      <textarea id="instr" placeholder="e.g. Act as an adversarial auditor for audit Builder. Challenge every claim.">${esc(n.instructions||"")}</textarea>
       <p class="hint" id="roleNote"></p>
     </div>
     <h5>running locally</h5><div id="mini"></div>`;
@@ -620,11 +797,22 @@ function inspector(){
   // the model suggestions match the runtime you just chose.
   const choice = (id, key) => {
     const el = $("#"+id); if(!el) return;
-    el.onchange = () => { mark(); n[key] = el.value; save(); paint(); };
+    el.onchange = () => {
+      mark();
+      if(el.value === "__other__"){
+        const typed = prompt(
+          `New ${key} for ${n.name}.\n\nThe picker reads what the installed `
+          + `CLI knows about, so anything released since is not in the list `
+          + `yet. Typed exactly, it is passed straight to the runtime.`,
+          n[key] || "");
+        n[key] = (typed || "").trim();
+      } else { n[key] = el.value; }
+      save(); paint();
+    };
   };
-  text("fName","name"); text("fModel","model");
-  text("fEffort","effort"); text("fDir","dir");
+  text("fName","name"); text("fDir","dir");
   choice("fRole","role"); choice("fRt","runtime");
+  choice("fModel","model"); choice("fEffort","effort");
   const ta = $("#instr"), roleBox = $("#roleBox");
   ta.onfocus = mark;
   ta.oninput = () => { n.instructions = ta.value; save(); roleNote(n); };
@@ -633,11 +821,11 @@ function inspector(){
   // The library, offered where the role is written.
   const pick = $("#pPick");
   PERSONAS.forEach(p => pick.insertAdjacentHTML("beforeend",
-    `<option value="${p.name.replace(/"/g,"&quot;")}">${p.name}</option>`));
+    `<option value="${esc(p.name)}">${esc(p.name)}</option>`));
   pick.onchange = () => {
     const p = PERSONAS.find(x=>x.name===pick.value); if(!p) return;
     mark(); n.instructions = p.body; save(); inspector();
-    log(`applied persona <b>${p.name}</b>`,"ok");
+    log(`applied persona <b>${esc(p.name)}</b>`,"ok");
   };
   $("#pSave").onclick = () => savePersona(n);
   roleNote(n);
@@ -664,7 +852,7 @@ function roleNote(n){
       + "cannot argue it away."
     : "Typed as a standing rule when the pane comes up. Codex has no way to "
       + "bind one at launch, so this is the weaker form.";
-  el.innerHTML = (hit ? `<b>${hit.name}</b> — saved. ` : "")
+  el.innerHTML = (hit ? `<b>${esc(hit.name)}</b> — saved. ` : "")
     + (n.instructions ? bound : "");
 }
 async function savePersona(n){
@@ -679,8 +867,8 @@ async function savePersona(n){
     await api("/api/personas/save",{method:"POST",
       body:JSON.stringify({name, body})});
     await loadPersonas(); inspector();
-    log(`saved persona <b>${name}</b> — it will be offered next time`,"ok");
-  }catch(e){ log(e.message,"err"); }
+    log(`saved persona <b>${esc(name)}</b> — it will be offered next time`,"ok");
+  }catch(e){ log(esc(e.message),"err"); }
 }
 /* OFFER, never nag: after a rig goes up, any role that is not yet in the
    library is offered once. A prompt that fires on something already saved is
@@ -690,13 +878,203 @@ async function offerToSave(nodes){
   for(const n of nodes){
     const body = (n.instructions||"").trim();
     if(!body || PERSONAS.find(p=>same(p.body, body))) continue;
-    log(`<b>${n.name}</b> ran with a role that is not in your library. `
+    log(`<b>${esc(n.name)}</b> ran with a role that is not in your library. `
         + `Select it and press save under Role to keep it.`);
   }
 }
 
 /* ---- rigs --------------------------------------------------------------- */
 let rigs = [];
+let recoveryKey = "", recoveryBusy = false;
+
+const RECOVERY_NAMES = {
+  rig_trust_prompt:"repository trust",
+  rig_hooks_review:"hooks review",
+  rig_update_prompt:"runtime update prompt",
+  rig_pane_not_ready:"startup timeout",
+  rig_name_not_resolvable:"agent naming",
+  rig_enrolment_unconfirmed:"agent enrolment",
+  rig_session_exists:"session already exists"
+};
+const launchPayload = t => ({
+  session:t.name, dir:t.dir, layout:t.layout,
+  agents:t.nodes.map(n=>({name:n.name, role:n.role, runtime:n.runtime,
+    model:n.model||null, effort:n.effort||null, dir:n.dir||null,
+    instructions:n.instructions||null}))
+});
+
+function hideRecovery(session){
+  if(session && $("#recovery").dataset.session !== session) return;
+  $("#recovery").hidden = true;
+  $("#recovery").replaceChildren();
+  $("#recovery").dataset.session = "";
+  recoveryKey = "";
+}
+
+function showRecovery(t, report){
+  if(recoveryBusy) return;
+  const session = report.session || t.name;
+  const panes = report.panes || [];
+  const problems = panes.filter(p=>p.reason);
+  const trust = problems.filter(p=>p.reason === "rig_trust_prompt");
+  const trustOnly = trust.length > 0 && trust.length === problems.length;
+  const hooks = problems.filter(p=>p.reason === "rig_hooks_review");
+  const hooksOnly = hooks.length > 0 && hooks.length === problems.length;
+  const key = JSON.stringify([session, problems.map(p=>[
+    p.name,p.pane,p.reason,p.trust_scope])]);
+  if(key === recoveryKey && !$("#recovery").hidden) return;
+  recoveryKey = key;
+
+  const box = $("#recovery");
+  box.dataset.session = session;
+  box.hidden = false;
+  const scopes = [...new Set(trust.map(p=>p.trust_scope).filter(Boolean))];
+  const scopeText = scopes.length ? scopes.join(", ") : t.dir;
+  const names = problems.map(p=>`${p.name || p.pane} · ${
+    RECOVERY_NAMES[p.reason] || p.reason}`).join("  ·  ");
+  box.innerHTML = `<div class="mark">!</div><div class="copy">
+    <div class="title">${trustOnly ? "Repository trust needed" : hooksOnly
+      ? "Hooks need review" : "This rig needs attention"}</div>
+    <div>${trustOnly
+      ? `${trust.length} agent${trust.length===1?" is":"s are"} paused at a normal first-time trust check. Nothing is broken.`
+      : hooksOnly
+        ? `Repository trust succeeded. ${hooks.length} agent${hooks.length===1?" is":"s are"} now paused at Codex's separate hooks checkpoint.`
+      : `Studio paused because ${problems.length || "one or more"} agent${problems.length===1?" needs":"s need"} input.`}</div>
+    ${trustOnly ? `<div class="security">Trusting <b>${esc(scopeText)}</b> lets the runtime load project-local configuration, hooks, and execution policies. Studio will verify the prompt, accept it, then restart only <b>${esc(session)}</b>.</div>` : ""}
+    ${hooksOnly ? `<div class="security">Hooks can execute outside the sandbox. Review them first. If you approve, Studio will verify and select the exact <b>Trust all and continue</b> choice, then restart only <b>${esc(session)}</b>.</div>` : ""}
+    ${names ? `<div class="panes">${esc(names)}</div>` : ""}
+    </div><div class="actions">
+      ${trustOnly ? `<button class="primary trust">Trust repository &amp; retry</button>` : ""}
+      ${hooksOnly ? `<button class="primary hooks">I reviewed them — trust hooks &amp; retry</button>` : ""}
+      <button class="attach">Copy manual attach command</button>
+    </div>`;
+
+  box.querySelector(".attach").onclick = async () => {
+    await navigator.clipboard.writeText(`tmux attach -t ${session}`).catch(()=>{});
+    log(`copied <b>tmux attach -t ${esc(session)}</b> — paste it in a terminal`, "ok");
+  };
+  const button = box.querySelector(".trust");
+  if(button) button.onclick = async () => {
+    const warning = `Trust ${scopeText}? This lets the runtime load project-local `
+      + `configuration, hooks, and execution policies. Studio will press Enter only `
+      + `in panes that are still showing the trust prompt, then restart only `
+      + `"${session}". Continue?`;
+    if(!confirm(warning)) return;
+    const current = tabs.find(x=>x.name === session) || t;
+    recoveryBusy = true; button.disabled = true;
+    button.textContent = "Accepting trust & restarting…";
+    log(`accepting verified trust prompts for <b>${esc(session)}</b> and retrying`);
+    try{
+      const r = await api("/api/rig/trust-and-retry", {method:"POST",
+        body:JSON.stringify(launchPayload(current))});
+      finishLaunch(current, r); hideRecovery(session);
+    }catch(e){ showLaunchFailure(current, e); }
+    recoveryBusy = false;
+    refresh();
+  };
+  const hookButton = box.querySelector(".hooks");
+  if(hookButton) hookButton.onclick = async () => {
+    const warning = `Approve the hooks shown by Codex? Hooks can execute outside the `
+      + `sandbox. Studio will select "Trust all and continue" only in panes still `
+      + `showing that exact review screen, then restart only "${session}". Continue?`;
+    if(!confirm(warning)) return;
+    const current = tabs.find(x=>x.name === session) || t;
+    recoveryBusy = true; hookButton.disabled = true;
+    hookButton.textContent = "Approving hooks & restarting…";
+    log(`approving verified hook-review screens for <b>${esc(session)}</b> and retrying`);
+    try{
+      const r = await api("/api/rig/hooks-and-retry", {method:"POST",
+        body:JSON.stringify(launchPayload(current))});
+      finishLaunch(current, r); hideRecovery(session);
+    }catch(e){ showLaunchFailure(current, e); }
+    recoveryBusy = false;
+    refresh();
+  };
+}
+
+function syncRecoveryFromState(){
+  if(recoveryBusy) return;
+  const t = tab(), live = standing[t.name];
+  if(live && (live.panes||[]).some(p=>p.reason)) showRecovery(t, live);
+  else hideRecovery();
+}
+
+function showLaunchFailure(t, error){
+  const report = error.body || {};
+  if(report.state === "REFUSED"){
+    showRecovery(t, report);
+    const problems = (report.panes||[]).filter(p=>p.reason);
+    const setupOnly = problems.length && problems.every(p=>
+      p.reason === "rig_trust_prompt" || p.reason === "rig_hooks_review");
+    if(setupOnly){
+      log(`<b>${esc(report.session || t.name)}</b> is waiting for a setup decision — use the card above.`);
+    }else{
+      const summary = problems.length
+        ? problems.map(p=>`${p.name || p.pane}: ${RECOVERY_NAMES[p.reason] || p.reason}`).join(" · ")
+        : report.detail || `launch refused (HTTP ${error.status || "error"})`;
+      log(esc(summary), "err");
+    }
+    return;
+  }
+  log(esc(report.error || report.detail ||
+    `launch failed (HTTP ${error.status || "error"})`), "err");
+}
+
+function finishLaunch(t, report){
+  (report.panes||[]).forEach((p, i) => {
+    if(t.nodes[i]) t.nodes[i].deployed = p.name;
+  });
+  save(); offerToSave(t.nodes);
+  log(`<b>${esc(t.name)}</b> is READY: ${(report.panes||[])
+    .map(p=>esc(p.name)).join(", ")}`, "ok");
+}
+
+/* Reconstruct a standing rig as a drawing. Shared by the `open` button and by
+   first run, so a browser that has never seen this studio shows what is
+   actually running instead of a blank canvas beside a panel listing four
+   live fleets. Workers are laid out in a row with the orchestrator centred
+   over them, rather than at a fixed offset that overlapped on a wide fleet. */
+function openRigInTab(r, {quiet=false} = {}){
+  const existing = tabs.findIndex(t=>t.name === r.session);
+  mark();
+  const kids = r.panes.filter(p=>(p.role||"worker") !== "orchestrator");
+  const nodes = r.panes.map(p=>{
+    const isOrch = (p.role||"worker") === "orchestrator";
+    const i = isOrch ? 0 : kids.indexOf(p);
+    return {
+      id: ++seq, role: p.role || "worker", runtime: p.runtime,
+      // The pane carries the rig prefix; the drawing does not.
+      name: String(p.name).startsWith(r.session+" ")
+            ? String(p.name).slice(r.session.length+1) : p.name,
+      model: p.model||"", effort: p.effort||"", dir:"", instructions:"",
+      deployed: p.name,
+      x: isOrch ? Math.round(Math.max(0,kids.length-1)*250/2)+60 : 60+i*250,
+      y: isOrch ? 60 : 300};
+  });
+  const t = {name:r.session, dir:"~", layout:"main-horizontal", nodes};
+  if(existing >= 0){ tabs[existing] = t; active = existing; }
+  else { tabs.push(t); active = tabs.length-1; }
+  sel = null; save(); paint();
+  if(!quiet) log(`opened <b>${esc(r.session)}</b> in a tab`,"ok");
+}
+
+/* FIRST RUN ONLY, into a pristine board. A new browser -- or a new profile,
+   which is how this surfaced -- showed an empty canvas next to a panel
+   listing four standing rigs. The fleet existed; the drawing of it lived in
+   another browser's storage. Guarded hard: once per page, and never when
+   there is anything to lose. */
+let adopted = false;
+function adoptStandingRigsOnce(){
+  if(adopted) return;
+  const pristine = tabs.length === 1 && tabs[0].nodes.length === 0;
+  const live = rigs.filter(r=>r.standing);
+  if(!pristine || !live.length){ adopted = true; return; }
+  adopted = true;
+  tabs = [];
+  live.forEach(r => openRigInTab(r, {quiet:true}));
+  active = 0; past.length = 0; save(); paint();
+  log(`${live.length} standing rig(s) opened into tabs`,"ok");
+}
 function rigList(box, compact){
   box.innerHTML = rigs.length ? "" : `<p style="color:var(--faint);font-size:11px">none yet.</p>`;
   rigs.forEach(r=>{
@@ -704,7 +1082,7 @@ function rigList(box, compact){
     el.className = "rig"+(r.standing?" up":"");
     const n = r.panes.length;
     el.innerHTML = `<div class="top"><span class="d"></span>
-      <span class="nm">${r.session}</span>
+      <span class="nm">${esc(r.session)}</span>
       <span class="pill ${r.standing?"up":"down"}">${r.standing?"standing":"down"}</span>
       <span class="cnt">${n} agent${n===1?"":"s"}</span>
       <button class="open" title="open this rig in a tab">open</button>
@@ -712,45 +1090,28 @@ function rigList(box, compact){
       ${r.standing?`<button class="kill">×</button>`
                   :`<button class="forget" title="remove this record">×</button>`}</div>
       ${compact?"":`<div class="w">${r.panes.map(p=>
-        `<span class="${p.alive?"":"off"}">${p.alive?"●":"○"} ${p.name}</span>`
+        `<span class="${p.alive?"":"off"}">${p.alive?"●":"○"} ${esc(p.name)}</span>`
         ).join("<br>")}</div>`}`;
     /* IMPORT A REAL RIG INTO A TAB. Without this a tab was a drawing with no
        way back from the machine: tear a rig down from here and its tab kept
        claiming panes that no longer existed, and a rig stood up from the CLI
        could not be edited at all. */
-    el.querySelector(".open").onclick = () => {
-      const existing = tabs.findIndex(t=>t.name === r.session);
-      mark();
-      const nodes = r.panes.map((p,i)=>({
-        id: ++seq, role: p.role || "worker", runtime: p.runtime,
-        // The pane carries the rig prefix; the drawing does not.
-        name: String(p.name).startsWith(r.session+" ")
-              ? String(p.name).slice(r.session.length+1) : p.name,
-        model: p.model||"", effort: p.effort||"", dir:"", instructions:"",
-        deployed: p.name,
-        x: 60 + (p.role==="orchestrator" ? 0 : i-1)*250,
-        y: p.role==="orchestrator" ? 60 : 300}));
-      const t = {name:r.session, dir:"~", layout:"main-horizontal", nodes};
-      if(existing >= 0){ tabs[existing] = t; active = existing; }
-      else { tabs.push(t); active = tabs.length-1; }
-      sel = null; save(); paint();
-      log(`opened <b>${r.session}</b> in a tab`,"ok");
-    };
+    el.querySelector(".open").onclick = () => { openRigInTab(r); };
     const fg = el.querySelector(".forget");
     if(fg) fg.onclick = async () => {
       // Only ever offered on a rig that is DOWN, and the server refuses a
       // standing one regardless of what this page believes.
       try{ await api("/api/rig/forget",{method:"POST",
         body:JSON.stringify({session:r.session})});
-        log(`forgot the record for <b>${r.session}</b>`,"ok");
-      }catch(e){ log(e.message,"err"); }
+        log(`forgot the record for <b>${esc(r.session)}</b>`,"ok");
+      }catch(e){ log(esc(e.message),"err"); }
       refresh();
     };
     const att = el.querySelector(".att");
     if(att) att.onclick = async () => {
       await navigator.clipboard.writeText(`tmux attach -t ${r.session}`)
         .catch(()=>{});
-      log(`copied <b>tmux attach -t ${r.session}</b> — paste it in a terminal`,
+      log(`copied <b>tmux attach -t ${esc(r.session)}</b> — paste it in a terminal`,
           "ok");
     };
     const k = el.querySelector(".kill");
@@ -766,8 +1127,8 @@ function rigList(box, compact){
         // The drawing outlives the rig; its live stamps must not.
         const t = tabs.find(x=>x.name === r.session);
         if(t){ t.nodes.forEach(n=>delete n.deployed); save(); }
-        log(`tore down <b>${r.session}</b>`,"ok");
-      }catch(e){ log(e.message,"err"); }
+        log(`tore down <b>${esc(r.session)}</b>`,"ok");
+      }catch(e){ log(esc(e.message),"err"); }
       refresh();
     };
     box.appendChild(el);
@@ -779,14 +1140,24 @@ async function refresh(){
     rigs = s.rigs; standing = {};
     rigs.forEach(r=>{ if(r.standing) standing[r.session] = r; });
     $("#rign").textContent = rigs.filter(r=>r.standing).length;
+    adoptStandingRigsOnce();
     rigList($("#prigs"), false);
-    $("#conn").classList.remove("off");
-    $("#connt").textContent = "localhost · connected";
-    paint();
+    if(s.stale_code){
+      // The server is running code older than the files on disk. Said out
+      // loud because from here it looks like a broken feature, not an old
+      // process, and that mistake has cost real time.
+      $("#conn").classList.add("off");
+      $("#connt").innerHTML = `<b>server is running older code</b> — restart it`;
+    } else {
+      $("#conn").classList.remove("off");
+      $("#connt").textContent = s.managed
+        ? "always-on service · connected" : "localhost · connected";
+    }
+    paint(); syncRecoveryFromState();
   }catch(e){
     $("#conn").classList.add("off");
     $("#connt").textContent = "localhost · unreachable";
-    log("state: "+e.message,"err");
+    log("state: "+esc(e.message),"err");
   }
 }
 
@@ -817,16 +1188,24 @@ function claudeAge(){
        : `${Math.round(m/60)}h ago`;
 }
 function claudeBadge(){
-  const c = (USAGE?.limits||{}).claude_code;
-  if(!c || !c.windows)
-    return `claude <span class="none">unread</span>`
-         + ` <span class="ask" id="askCC">check</span>`;
+  const lim = USAGE?.limits || {};
+  const c = lim.claude_code;
+  if(!c || !c.windows){
+    // A failure names itself. "reading…" forever is the shape this project
+    // exists to remove.
+    if(lim.claude_code_error)
+      return `claude <span class="none" title="${lim.claude_code_error}">`
+           + `could not read</span>`
+           + ` <span class="ask" id="askCC">retry</span>`;
+    return `claude <span class="none">reading…</span>`
+         + ` <span class="ask" id="askCC">now</span>`;
+  }
   // The WEEKLY figure is the one that shapes a design decision; the session
   // window is shown in the panel.
   const w = c.windows["week (all models)"] || Object.values(c.windows)[0];
-  return `claude ${gauge(w.used_percent)}<b>${w.used_percent}%</b>`
+  return `claude ${gauge(w.used_percent)}<b>${w.used_percent}%</b> used`
        + ` <span class="none">${claudeAge()}</span>`
-       + ` <span class="ask" id="askCC">↻</span>`;
+       + ` <span class="ask" id="askCC" title="re-read; costs one Claude turn">↻</span>`;
 }
 function gauge(pct){
   const cls = pct >= 85 ? "hot" : pct >= 60 ? "warn" : "";
@@ -839,14 +1218,15 @@ async function usage(){
   // The scan runs on a worker thread; the plan percentage is available
   // immediately either way, so only the token half waits.
   const counting = USAGE.computing ? ` <span class="none">counting…</span>` : "";
+  // BOTH READ THE SAME WAY: percent USED of the weekly window. The number
+  // Codex reports is `used_percent`, so "40%" means 40% spent, not 40% left,
+  // and the label says so rather than leaving it to be guessed.
   $("#usebar").innerHTML =
     (cx === null
-      ? `<span class="none">codex usage unread</span>`
-      : `codex ${gauge(cx)}<b>${cx}%</b> <span class="none">${
-          resetsIn(lim.primary.resets_at)}</span>`)
+      ? `<span class="none">codex —</span>`
+      : `codex ${gauge(cx)}<b>${cx}%</b> used`
+        + ` <span class="none">${resetsIn(lim.primary.resets_at)}</span>`)
     + ` <span class="none">│</span> ${claudeBadge()}`
-    + ` <span class="none">│</span> today `
-    + `<b>${K((t.claude_code?.today?.output||0)+(t.codex?.today?.output||0))}</b> out`
     + counting;
   paintUsagePane();
   const ask = $("#askCC");
@@ -857,7 +1237,7 @@ async function usage(){
       await api("/api/usage/claude", {method:"POST", body:"{}"});
       await usage();
       log("claude usage refreshed (cost: one Claude turn)","ok");
-    }catch(err){ log("claude usage: "+err.message,"err"); await usage(); }
+    }catch(err){ log("claude usage: "+esc(err.message),"err"); await usage(); }
   };
 }
 function paintUsagePane(){
@@ -915,6 +1295,7 @@ function status(){
   $("#stM").textContent = `${o} orchestrator · ${n-o} worker${n-o===1?"":"s"}`;
   $("#go").textContent = standing[t.name] ? "Rebuild" : "Bring it to life";
   $("#host").textContent = location.host;
+  syncRecoveryFromState();
 }
 
 /* ---- palette, drag and drop -------------------------------------------- */
@@ -944,7 +1325,7 @@ stage.addEventListener("drop", e=>{
      (e.target.closest(".node") || hit)){
     const wasProvider = spec.rt !== hit.runtime;
     if(wasProvider){ hit.runtime = spec.rt; sel = hit.id; save(); paint();
-      return log(`${hit.name} now runs ${PRETTY[spec.rt]}`,"ok"); }
+      return log(`${esc(hit.name)} now runs ${esc(PRETTY[spec.rt])}`,"ok"); }
   }
   add(spec.role, spec.rt, x, y);
 });
@@ -1021,9 +1402,9 @@ $$("#viewseg div").forEach(d => d.onclick = () => {
   $$("#viewseg div").forEach(x=>x.classList.remove("on"));
   d.classList.add("on");
   if(d.dataset.m === "panes"){
-    log("Pane preview is not built: the honest version has to render the tmux "
-        + "layout the server would actually produce, and inventing a picture "
-        + "of it would be a diagram that lies.","err");
+    // Not an error: nothing failed. It is simply not built, and saying so
+    // quietly reads better than a red line for a button that works fine.
+    log("Pane preview — coming soon.");
     $$("#viewseg div").forEach(x=>x.classList.remove("on"));
     $("#viewseg div").classList.add("on");
   }
@@ -1038,7 +1419,7 @@ $("#btnlog").onclick = () => $("#log").classList.toggle("on");
 $("#btnfind").onclick = () => {
   const q = prompt("find a node by name"); if(!q) return;
   const n = tab().nodes.find(x=>x.name.toLowerCase().includes(q.toLowerCase()));
-  if(n){ sel = n.id; paint(); } else log(`no node matching ${q}`,"err");
+  if(n){ sel = n.id; paint(); } else log(`no node matching ${esc(q)}`,"err");
 };
 function showPane(which){
   $$("#itabs div").forEach(d=>d.classList.toggle("on", d.dataset.p===which));
@@ -1079,38 +1460,29 @@ $("#zfit").onclick = () => {
 $("#go").onclick = async () => {
   const t = tab();
   if(!t.nodes.length) return log("a fleet with no agents is not a fleet","err");
+  hideRecovery();
   $("#go").disabled = true;
   if(standing[t.name]){
     if(!confirm(`"${t.name}" is standing. Rebuild tears it down first and `
       + `every agent loses its context. Continue?`)){
       $("#go").disabled = false; return;
     }
-    log(`tearing <b>${t.name}</b> down first`);
+    log(`tearing <b>${esc(t.name)}</b> down first`);
     try{ await api("/api/rig/down",{method:"POST",
-      body:JSON.stringify({session:t.name})}); }catch(e){ log(e.message,"err"); }
+      body:JSON.stringify({session:t.name})}); }catch(e){ log(esc(e.message),"err"); }
   }
-  log(`standing up <b>${t.name}</b> in ${t.dir} … ~30s: every pane boots, is `
+  log(`standing up <b>${esc(t.name)}</b> in ${esc(t.dir)} … ~30s: every pane boots, is `
       +`named and is enrolled before this returns.`);
   try{
-    const r = await api("/api/rig/up",{method:"POST",body:JSON.stringify({
-      session:t.name, dir:t.dir, layout:t.layout,
-      agents: t.nodes.map(n=>({name:n.name, role:n.role, runtime:n.runtime,
-        model:n.model||null, effort:n.effort||null, dir:n.dir||null,
-        instructions:n.instructions||null}))})});
-    // Stamp what each node was actually deployed as, so liveness survives a
-    // later rename and a drifted node can say so.
-    r.panes.forEach((p, i) => { if(t.nodes[i]) t.nodes[i].deployed = p.name; });
-    save(); offerToSave(t.nodes);
-    log(`<b>${t.name}</b> is ${r.state}: ${r.panes.map(p=>p.name).join(", ")}`,
-        r.state==="READY"?"ok":"err");
-    if(r.problems) log("problems: "+r.problems.join(", ")
-      +" — the report names the obstacle for each pane","err");
-  }catch(e){ log(e.message,"err"); }
+    const r = await api("/api/rig/up",{method:"POST",
+      body:JSON.stringify(launchPayload(t))});
+    finishLaunch(t, r);
+  }catch(e){ showLaunchFailure(t, e); }
   $("#go").disabled = false; refresh();
 };
 
 /* ---- keys --------------------------------------------------------------- */
-addEventListener("keydown", e => {
+addEventListener("keydown", async e => {
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const meta = e.metaKey || e.ctrlKey;
   if(!meta){
@@ -1126,6 +1498,7 @@ addEventListener("keydown", e => {
   else if(k === "w"){
     e.preventDefault();
     if(tabs.length===1) return log("the last tab stays","err");
+    if(!await discardDraft(tab())) return;
     tabs.splice(active,1); active = Math.max(0,active-1); save(); paint();
   }
   else if(k === "enter"){ e.preventDefault(); $("#go").click(); }
@@ -1136,7 +1509,7 @@ addEventListener("keydown", e => {
 });
 
 api("/api/models").then(c => { CATALOG = c; inspector(); })
-  .catch(e => log("models: "+e.message, "err"));
+  .catch(e => log("models: "+esc(e.message), "err"));
 /* ---- splitters ----------------------------------------------------------
    Column widths are the operator's, kept per browser. A layout that cannot be
    adjusted is one that is wrong on every display but the one it was built on,
@@ -1186,8 +1559,8 @@ applyWidths();
 addEventListener("resize", () => paintCanvas());
 
 loadPersonas().then(inspector);
-load(); loadView(); paint(); refresh(); usage();
-setInterval(refresh, 5000); setInterval(usage, 30000);
+load(); loadView(); paint(); syncDrafts({initial:true}); refresh(); usage();
+setInterval(()=>{ refresh(); syncDrafts(); }, 5000); setInterval(usage, 30000);
 // One quick re-poll so a cold token scan lands without a 30s wait.
 setTimeout(usage, 8000);
 $("#usebar").onclick = () => showPane("usage");

@@ -56,6 +56,78 @@ _USAGE_LINE = re.compile(
     r"(?:\s*[·-]\s*resets\s*(?P<resets>[^(\n]+))?", re.M)
 
 
+def model_catalog():
+    """Every model each CLI will accept, READ FROM THE CLI ITSELF.
+
+    A dropdown is only better than a text box if its options are right, and
+    the first version of this list was typed from memory and offered Codex a
+    `gpt-5.6` that came back from the API as "model is not supported". So
+    these are extracted from each installed binary's own strings, plus
+    whatever the operator's config already names, which is proof-by-existence
+    that at least that one works.
+
+    HONEST LIMIT: being in a binary's catalog means the CLI knows the name,
+    not that this ACCOUNT can call it. Only the configured default is proven,
+    and it is marked. A wrong pick still fails loudly in the pane rather than
+    silently.
+    """
+    import subprocess
+
+    def binary_for(cmd):
+        try:
+            path = subprocess.run(["command", "-v", cmd], capture_output=True,
+                                  text=True, shell=False).stdout.strip()
+        except OSError:
+            path = ""
+        return path or shutil_which(cmd)
+
+    def shutil_which(cmd):
+        import shutil
+        return shutil.which(cmd) or ""
+
+    def strings_of(path, pattern):
+        import re as _re
+        try:
+            with open(path, "rb") as handle:
+                blob = handle.read()
+        except OSError:
+            return []
+        text = blob.decode("latin-1", "ignore")
+        return sorted({m for m in _re.findall(pattern, text)})
+
+    claude_models = []
+    cpath = shutil_which("claude")
+    if cpath:
+        real = os.path.realpath(cpath)
+        # The ALIAS forms, which is what the CLI documents and what a person
+        # would recognise. The dated ids exist too and are noise in a picker.
+        claude_models = [a.strip('"') for a in strings_of(
+            real, r'"(?:opus|sonnet|haiku|fable)(?:\[1m\])?"')]
+        claude_models = sorted({a for a in claude_models}, key=lambda a: (
+            "haiku" in a, "sonnet" in a, "fable" in a, "[1m]" in a, a))
+
+    codex_models = []
+    cxpath = shutil_which("codex")
+    if cxpath:
+        base = os.path.dirname(os.path.realpath(cxpath))
+        for candidate in glob.glob(os.path.join(
+                base, "..", "node_modules", "@openai", "codex-*", "vendor",
+                "*", "bin", "codex")):
+            # Suffixes are whitelisted, not open-ended. A loose `-[a-z]+`
+            # swept up neighbouring bytes and produced entries like
+            # `gpt-5.6-terraglobal` -- a picker full of models that do not
+            # exist is worse than the text box it replaces. The negative
+            # lookahead stops a match that runs into the next string.
+            codex_models = strings_of(
+                candidate,
+                r"\bgpt-5\.[0-9]+(?:-(?:sol|pro|terra|luna|mini|nano|codex))?"
+                r"(?![a-z0-9.-])")
+            if codex_models:
+                break
+        codex_models = sorted(set(codex_models), reverse=True)
+    return {"claude_code": claude_models, "codex": codex_models}
+
+
 def claude_plan_usage(timeout=90):
     """Ask Claude Code for its own usage. COSTS ONE TURN; never on a timer.
 
@@ -165,6 +237,7 @@ class Usage:
         self.files = {}          # path -> {"key": (mtime,size), "days": {...}}
         self.snapshot = None
         self.claude = None       # last /usage reading, with its age
+        self.claude_error = None  # why the last attempt failed, if it did
         self.busy = False
         self._load()
 
@@ -177,6 +250,7 @@ class Usage:
                           for k, v in saved.get("files", {}).items()}
             self.snapshot = saved.get("snapshot")
             self.claude = saved.get("claude")
+            self.claude_error = saved.get("claude_error")
         except (OSError, ValueError, KeyError, TypeError):
             self.files = {}
 
@@ -187,7 +261,8 @@ class Usage:
             json.dump({"files": {k: {"key": list(v["key"]), "days": v["days"]}
                                  for k, v in self.files.items()},
                        "snapshot": self.snapshot,
-                       "claude": self.claude}, handle)
+                       "claude": self.claude,
+                       "claude_error": self.claude_error}, handle)
         os.replace(tmp, self.cache_path)
 
     # --------------------------------------------------------------- scanning
@@ -255,6 +330,11 @@ class Usage:
 
         threading.Thread(target=run, daemon=True).start()
 
+    #: A scan is cheap warm and not free. Re-scanning on every poll made
+    #: `busy` true whenever it was read, so the page said "counting…"
+    #: forever while the numbers underneath were already correct.
+    MIN_RESCAN_S = 20
+
     def read(self):
         """NEVER BLOCKS. A cold scan is ~5.5 seconds and this is polled by a
         page, so a first call that waits for it is a hang the operator cannot
@@ -264,26 +344,40 @@ class Usage:
         Caught by a test that timed out rather than by anyone reasoning about
         it, which is the only reason the blocking version did not ship.
         """
-        self.refresh_async()
+        fresh_enough = (self.snapshot
+                        and time.time() - self.snapshot.get("computed_at", 0)
+                        < self.MIN_RESCAN_S)
+        if not fresh_enough:
+            self.refresh_async()
         if self.snapshot is None:
             return {"tokens": {}, "limits": {"codex": _newest_codex_limits(),
                                              "claude_code": self.claude,
                                              "claude_code_reason":
-                                                 CLAUDE_LIMIT_ABSENT},
+                                                 CLAUDE_LIMIT_ABSENT,
+                                             "claude_code_error":
+                                                 self.claude_error},
                     "computing": True}
         snap = dict(self.snapshot, computing=self.busy)
-        snap["limits"] = dict(snap["limits"], claude_code=self.claude)
+        snap["limits"] = dict(snap["limits"], claude_code=self.claude,
+                              claude_code_error=self.claude_error)
         return snap
 
     def ask_claude(self):
-        """Refresh the Claude reading. Explicit, because it costs a turn."""
+        """Refresh the Claude reading. Explicit, because it costs a turn.
+
+        A FAILURE IS RECORDED, NOT SWALLOWED. The first version kept the last
+        good reading and returned the error to the caller, so a priming thread
+        that failed left the page saying "reading…" with no reason anywhere.
+        """
         reading = claude_plan_usage()
-        if "error" not in reading:
-            self.claude = reading
-            try:
-                self._save()
-            except OSError:
-                pass
+        if "error" in reading:
+            self.claude_error = reading["error"]
+        else:
+            self.claude, self.claude_error = reading, None
+        try:
+            self._save()
+        except OSError:
+            pass
         return reading
 
 

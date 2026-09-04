@@ -26,7 +26,7 @@ To undo either: `claude mcp remove --scope user nxb` / `codex mcp remove nxb`.
 **Use an absolute python path if `which python3` might differ later.** The one
 tested resolves through mise, and if that moves the server stops starting.
 
-## The three tools
+## The MCP tools
 
 - **`nxb_dispatch`** — hand it a directive and a runtime (`claude_code` or
   `codex`); it starts a fresh worker, waits, and returns that worker's report.
@@ -34,6 +34,34 @@ tested resolves through mise, and if that moves the server stops starting.
   repeatedly; reading consumes nothing.
 - **`nxb_pending`** — outcomes nobody has collected. The alarm. It reports a
   count, so an empty list and a firing alarm do not look alike.
+
+Studio design is on the same provider-neutral MCP server. These tools change
+drawings only; **none launches agents**:
+
+- **`nxb_studio_catalog`** — installed runtimes, their current model and effort
+  choices, layouts, and saved personas. A model should read this before choosing
+  machine-specific model ids.
+- **`nxb_studio_draft_validate`** — check a complete workflow without writing.
+- **`nxb_studio_draft_save`** — create the entire fleet in one call, or replace
+  a revision previously read. It auto-lays out nodes whose `x` and `y` are
+  omitted.
+- **`nxb_studio_draft_list`** / **`nxb_studio_draft_get`** — discover and read
+  durable workflows.
+- **`nxb_studio_draft_delete`** — revision-guarded and recoverable; it moves the
+  JSON file under `~/.nxb/studio-drafts/trash/`.
+
+The save tool takes the workflow, not a sequence of UI gestures: `session`,
+`working_directory`, `layout`, and an `agents` array. Each agent has a unique
+`name`, `role` (`worker` or `orchestrator`), `runtime` (`claude_code` or
+`codex`), and optional model, effort, working directory, instructions, and
+canvas coordinates. Omit `draft_id` to create. For an update, get the draft
+first and send its `draft_id` and `expected_revision`; a stale writer is refused
+instead of overwriting a newer human or model edit.
+
+An open Studio imports MCP-created drafts on its five-second refresh. The files
+also exist when Studio is closed, so the MCP server does not depend on a browser
+or the HTTP server being alive. **Bring it to life remains the human launch
+gate** in Studio.
 
 **The worker cannot see your conversation.** It gets only the directive, so
 every path, precondition and acceptance criterion has to be inside it. That is
@@ -439,11 +467,20 @@ not place on the canvas, and the panel on the right shows every fleet that is
 currently standing so you can tear one down when you are done with it.
 
 ```
-python3 -m nxb studio          # a browser tab
-python3 -m nxb studio --app    # a chromeless window, if you have Chrome/Brave
+python3 -m nxb studio install  # once: always-on macOS user service
+python3 -m nxb studio status   # loaded, reachable, pid, logs
+python3 -m nxb studio          # foreground development server
+python3 -m nxb studio --app    # foreground + chromeless Chrome/Brave window
 ```
 
-It prints a URL with a token and opens it.
+The installed service is a LaunchAgent with `RunAtLoad` and `KeepAlive`: it
+starts at login, restarts after a crash, and exits no terminal. It is still
+bound only to `127.0.0.1`; removing manual startup is not a reason to expose an
+agent-launching endpoint to the network. `studio restart` deliberately cycles
+it, and `studio uninstall` unloads it while preserving the ledger, drafts,
+token, and logs.
+
+The foreground form prints a URL with a token and opens it.
 
 ### Making it a real app
 
@@ -466,7 +503,9 @@ is no tab strip to own them.
 **Tabs, one per rig.** Like Ghostty's. Each tab holds its own rig name, working
 directory, layout and canvas, so you can design several fleets and switch
 between them. A tab's dot goes green when that rig is actually standing. Tabs
-survive a page reload; they are drafts in your browser, not state on disk.
+survive a page reload and live as JSON beside the ledger, shared with any MCP
+client. Browser storage is now only a cache and migration source for drafts made
+before the shared store existed.
 
 **A palette you drag from.** Four kinds down the left -- Claude worker, Codex
 worker, Claude orchestrator, Codex orchestrator. Drag one onto the canvas to
@@ -518,12 +557,17 @@ the Inspector gives you:
   refused.
 - **Provider** -- Claude or Codex. You can also drop a provider chip onto an
   existing node to switch it.
-- **Model** and **Reasoning** -- free text with suggestions; these reach the
-  real flags: `--model` and `--effort` for Claude, `-m` and
-  `-c model_reasoning_effort` for Codex. Leave one empty and no flag is passed
-  at all, so the runtime uses its own config -- and the placeholder names
-  exactly what that is (`default: opus[1m]`), read from your `settings.json`
-  and `config.toml`, so you can see what you would be overriding.
+- **Model** and **Reasoning** -- **dropdowns**, so they cannot be mistyped.
+  The options are read from the CLIs installed on this machine: Claude's
+  alias forms (`opus`, `opus[1m]`, `sonnet`, `haiku`, `fable`...) and Codex's
+  `gpt-5.x` ids, with your configured default listed first and marked. They
+  reach the real flags -- `--model` and `--effort` for Claude, `-m` and
+  `-c model_reasoning_effort` for Codex. Leaving one on *default* passes no
+  flag at all, so the runtime uses its own config.
+
+  One honest limit: a model being in a CLI's catalog means that CLI knows the
+  name, not that your account can call it. Your configured default is the one
+  proven to work, which is why it leads the list.
 - **Working directory** -- per agent, falling back to the rig's.
 - **Startup instructions** -- typed into the pane once it is up, **as you,
   unmarked**. They are you briefing your own pane, so they carry no marker and
@@ -592,6 +636,8 @@ vendor carries a fleet:
 
 - **Codex plan usage is real.** Every rollout records `used_percent`, the
   window length and when it resets. That is read from your newest session.
+- **Both figures read the same way: percent USED** of the weekly window, not
+  remaining. 40% means 40% spent.
 - **Claude plan usage is real, and costs a turn to ask for.** Nothing is
   written to disk, but `claude -p "/usage"` answers headlessly with *more*
   than Codex records: session, weekly, and per-model. So it is a **button**
@@ -633,3 +679,45 @@ They live as markdown in `~/.nxb/personas/`, one file per role. That is
 deliberate: they are prose you wrote, so you should be able to open, edit,
 grep and copy them without this tool.
 
+## When a runtime updates, or a new model drops (nxb-074)
+
+```
+python3 -m nxb doctor          # fast, spends nothing
+python3 -m nxb doctor --deep   # also boots each runtime; one Claude turn
+```
+
+**Run it after any runtime update, and whenever you hear about a release.**
+
+nxb reads screens, parses prose, greps binaries and passes flags. Every one of
+those is a contract with a vendor's CLI that the vendor never agreed to, and
+an update can void any of them without a word. Two broke in one afternoon: a
+Codex release added a boot prompt nobody had seen, and a model list written
+from memory offered one the API refused.
+
+The doctor asks all eight at once — launch flags, readiness markers, both
+model catalogs, the Codex rollout shape, the Claude transcript shape, the
+`/usage` wording — and exits non-zero only on real drift. **It fixes nothing
+on purpose.** A drifted assumption needs you to look at what the runtime does
+now, because code that guessed and was confidently wrong is the failure being
+caught.
+
+`--deep` verifies readiness markers by actually **booting** each runtime in a
+throwaway tmux pane and reading its screen. That costs a process start and no
+tokens, because nothing is ever sent to it. The grep-based version this
+replaced was wrong in both directions on its first run.
+
+### New models specifically
+
+The model pickers are scraped from the installed binaries, so a family
+released this morning matches nothing and would be invisible. Two things cover
+that:
+
+- **The doctor watches** for model-shaped names its own pattern cannot match
+  and lists them, so a release surfaces as a line to read rather than silence.
+  Some will be noise; `claude-eval-9` is not a model.
+- **Every picker has `other…`**, which takes a typed name straight to the
+  runtime. Without it the picker would be worse than a text box on the one day
+  that matters most. Typing is the exception there, not the default.
+
+`contract/runtime-versions.json` records the versions these answers were true
+for; `--record` updates it.

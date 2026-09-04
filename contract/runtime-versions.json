@@ -1,0 +1,8 @@
+{
+  "_doc": "Runtime versions the assumptions in nxb were last verified against. `python3 -m nxb doctor` re-checks them. A version here that no longer matches the machine is not itself a failure -- it is a reason to run doctor.",
+  "verified": {
+    "claude": "2.1.259 (Claude Code)",
+    "codex": "codex-cli 0.153.0",
+    "tmux": "tmux 3.7c"
+  }
+}

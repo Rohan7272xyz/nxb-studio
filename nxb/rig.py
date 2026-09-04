@@ -64,6 +64,7 @@ RIG_SESSION_EXISTS = "rig_session_exists"
 RIG_UNKNOWN_SCENARIO = "rig_unknown_scenario"
 RIG_PANE_NOT_READY = "rig_pane_not_ready"
 RIG_TRUST_PROMPT = "rig_trust_prompt"
+RIG_HOOKS_REVIEW = "rig_hooks_review"
 RIG_NAME_NOT_RESOLVABLE = "rig_name_not_resolvable"
 RIG_ENROLMENT_UNCONFIRMED = "rig_enrolment_unconfirmed"
 RIG_UPDATE_PROMPT = "rig_update_prompt"
@@ -89,6 +90,11 @@ BLOCKING_PROMPTS = {
     "Do you trust the contents of this directory": RIG_TRUST_PROMPT,   # codex
     "Quick safety check": RIG_TRUST_PROMPT,                            # claude
     "Is this a project you created or one you trust": RIG_TRUST_PROMPT,
+    # MEASURED 2026-09-04: accepting repository trust can immediately reveal
+    # a SECOND gate. Codex reviews configured lifecycle hooks separately
+    # because they run outside the sandbox. Treating the old READY marker
+    # behind this screen as readiness caused Studio to restart too early.
+    "Hooks need review": RIG_HOOKS_REVIEW,
     # MEASURED 2026-09-03, on a real stand-up: a Codex release landed and two
     # of three Codex panes came up on an update chooser reading "Press enter
     # to continue". Unlisted, it is indistinguishable from a slow boot, so the
@@ -127,6 +133,12 @@ RUNTIME_ALIASES = {"cc": "claude_code", "claude": "claude_code",
 #: and an orchestrator asked to cross-check has to be able to pick two workers
 #: that are genuinely different without looking anything up.
 WORKER_PREFIX = {"claude_code": "CC", "codex": "CX"}
+
+#: Border colours, one per agent. Spread across the 256-colour cube so no two
+#: panes side by side read as the same on a screen or on camera.
+ORCHESTRATOR_COLOUR = 141                       # the studio's accent mauve
+WORKER_COLOURS = [208, 45, 154, 213, 220, 39, 171, 84, 203, 111,
+                  49, 214, 129, 118, 167, 81]
 
 
 def parse_workers(spec):
@@ -399,6 +411,27 @@ def pane_state(pane, runtime):
     return None
 
 
+def trust_scope(screen):
+    """The directory a runtime is asking the operator to trust, if shown.
+
+    Codex can wrap ``repository root`` in the middle of the word in a narrow
+    pane, so this is parsed from a whitespace-normalised screen rather than a
+    single terminal line.  It is display evidence only: recovery still
+    re-checks the actual trust prompt before pressing anything.
+    """
+    flat = re.sub(r"\s+", " ", str(screen or "")).strip()
+    boundaries = (r"(?=\s+(?:Do you trust|Trusting the directory|"
+                  r"Quick safety check|Is this a project|(?:›\s*)?1\.))")
+    match = re.search(
+        r"repository\s+r\s*o\s*o\s*t\s*:\s*(.+?)" + boundaries,
+        flat, re.IGNORECASE)
+    if match is None:
+        match = re.search(r"You are in\s+(.+?)"
+                          r"(?=\s+(?:Note:|Do you trust|Quick safety check|"
+                          r"Is this a project))", flat, re.IGNORECASE)
+    return match.group(1).strip() if match else None
+
+
 def await_ready(pane, runtime, *, deadline=60.0, poll=0.5):
     """Wait for a READY marker. Returns (True, None) or (False, reason)."""
     end = time.monotonic() + deadline
@@ -578,9 +611,22 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
         made = _tmux("split-window", "-t", _exact_window(session),
                      "-c", pane_dirs[index], "-P", "-F", "#{pane_id}")
         if made.returncode != 0:
-            return _refuse(RIG_NO_TMUX,
-                           f"split-window failed: {made.stderr.strip()}")
+            return _refuse(
+                RIG_NO_TMUX,
+                f"split-window failed at pane {index + 1} of "
+                f"{len(plan['panes'])}: {made.stderr.strip()}",
+                remedy=["a smaller fleet, or a larger --width/--height"])
         pane_ids.append(made.stdout.strip())
+        # REDISTRIBUTE AFTER EVERY SPLIT, not once at the end.
+        #
+        # Each split halves the pane it lands in, so without this the window
+        # runs out of room and tmux refuses with "no space for a new pane".
+        # MEASURED with plain tmux on a 240x60 window, no runtimes involved:
+        # 5 panes without this line, 15 with it. The rig therefore had an
+        # undocumented ceiling of about six agents, and it failed as a bare
+        # tmux error message rather than as anything an operator could act
+        # on -- found by asking for eleven.
+        _tmux("select-layout", "-t", _exact_window(session), plan["layout"])
     _tmux("select-layout", "-t", _exact_window(session), plan["layout"])
 
     panes, problems = [], []
@@ -612,8 +658,13 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
         ok, reason = await_ready(entry["pane"], entry["runtime"],
                                  deadline=ready_deadline)
         if not ok:
+            screen = capture(entry["pane"])
             entry.update(state="REFUSED", reason=reason,
-                         screen_tail=capture(entry["pane"]).strip()[-300:])
+                         screen_tail=screen.strip()[-300:])
+            if reason == RIG_TRUST_PROMPT:
+                scope = trust_scope(screen)
+                if scope:
+                    entry["trust_scope"] = scope
             if reason in (RIG_TRUST_PROMPT, RIG_UPDATE_PROMPT):
                 what = ("trust prompt" if reason == RIG_TRUST_PROMPT
                         else "update prompt")
@@ -643,6 +694,14 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
                         f"python3 -m nxb rig up --session {session}",
                         "or stand the rig up in a directory both runtimes "
                         "already trust"]
+            elif reason == RIG_HOOKS_REVIEW:
+                entry["remedy"] = [
+                    f"tmux attach -t {session}, review the hooks in pane "
+                    f"{entry['pane']}. Hooks execute outside the sandbox, so "
+                    "this is a separate operator decision from repository "
+                    "trust.",
+                    "After the choice, rebuild this partial rig so Codex can "
+                    "finish naming and enrolment."]
             problems.append(entry)
             continue
         entry["state"] = "READY"
@@ -717,6 +776,39 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
                                  f"operator: {' '.join(str(text).split())} "
                                  f"This applies to every message from now on.")
         entry["role_binding"] = "typed"
+
+    # ONE COLOUR PER AGENT. Colouring by RUNTIME was the obvious move and it
+    # is the wrong one: a mixed fleet then has two colours, and eleven panes
+    # in two colours read as one undifferentiated block. The orchestrator
+    # keeps the accent so the eye lands on it first.
+    #
+    # EVERY PANE WEARS ITS AGENT'S NAME, whatever runtime is inside it.
+    # Claude titles its pane with the worker name and Codex titles it with the
+    # cwd, so half a mixed fleet's borders read "rohan" and the operator has
+    # to count panes to know who is who. The rig already knows every name, so
+    # it is stored as a tmux USER OPTION -- which a runtime cannot overwrite,
+    # unlike the pane title it is competing with.
+    worker_n = 0
+    for entry in panes:
+        if not entry.get("pane"):
+            continue
+        if entry.get("name"):
+            _tmux("set-option", "-p", "-t", entry["pane"],
+                  "@nxb_name", entry["name"])
+        if entry.get("role") == "orchestrator":
+            colour = ORCHESTRATOR_COLOUR
+        else:
+            colour = WORKER_COLOURS[worker_n % len(WORKER_COLOURS)]
+            worker_n += 1
+        _tmux("set-option", "-p", "-t", entry["pane"],
+              "pane-border-style", f"fg=colour{colour}")
+        _tmux("set-option", "-p", "-t", entry["pane"],
+              "pane-active-border-style", f"fg=colour{colour},bold")
+        entry["colour"] = colour
+    _tmux("set-option", "-t", _exact(session), "pane-border-format",
+          " #[bold]#{?@nxb_name,#{@nxb_name},#{pane_title}} ")
+    _tmux("set-option", "-t", _exact(session), "pane-border-status", "top")
+    _tmux("set-option", "-t", _exact(session), "pane-border-lines", "heavy")
 
     report = {"state": "REFUSED" if problems else "READY",
               "scenario": scenario, "session": session,
@@ -859,6 +951,277 @@ def live_rig_sessions(ledger):
     from nxb.keystroke import rig_sessions
     return [s for s in rig_sessions(ledger)
             if _tmux("has-session", "-t", _exact(s)).returncode == 0]
+
+
+def accept_trust_prompts(session, *, ledger, deadline=60.0, poll=0.5):
+    """Accept only currently visible directory-trust prompts in one rig.
+
+    This is intentionally narrower than a generic "continue" button.  The
+    operator has made the trust decision in Studio, but a stale browser must
+    never press Enter into a composer, an update chooser, or an unrelated
+    pane.  Every recorded pane is checked before any key is sent, then each
+    target is checked once more immediately before the literal Enter key.
+    """
+    if shutil.which("tmux") is None:
+        return _refuse(RIG_NO_TMUX, "tmux is not installed.")
+    if _tmux("has-session", "-t", _exact(session)).returncode != 0:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"tmux session {session!r} is no longer standing; there is no "
+            "trust prompt to accept.")
+
+    from nxb.keystroke import load_rig
+    record = load_rig(ledger, session)
+    entries = list((record or {}).get("panes") or [])
+    if not entries:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"no recorded panes belong to {session!r}; refusing to send a "
+            "key to an unverified tmux target.")
+    try:
+        live = _live_panes(session)
+    except RigTmuxError as exc:
+        return _refuse(RIG_PANE_NOT_READY, exc.detail)
+
+    targets, blockers, observed = [], [], []
+    for entry in entries:
+        pane = entry.get("pane")
+        runtime = entry.get("runtime")
+        if not pane or pane not in live or runtime not in READY_MARKERS:
+            current = "missing"
+        else:
+            current = pane_state(pane, runtime)
+        item = {"name": entry.get("name"), "pane": pane,
+                "runtime": runtime, "state": current}
+        if current == RIG_TRUST_PROMPT:
+            scope = trust_scope(capture(pane))
+            if scope:
+                item["trust_scope"] = scope
+            targets.append(item)
+        elif current != "READY":
+            blockers.append(item)
+        observed.append(item)
+
+    if blockers:
+        names = ", ".join(str(p.get("name") or p.get("pane"))
+                          for p in blockers)
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            "Trust recovery is available only when every incomplete pane is "
+            f"still at a directory-trust prompt. Check: {names}.",
+            panes=observed)
+    if not targets:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"no pane in {session!r} is currently showing a directory-trust "
+            "prompt, so Studio did not send any keys.", panes=observed)
+
+    # A second all-target check keeps a stale click from partially acting if
+    # a prompt changed while the first screen inventory was being captured.
+    changed = [p for p in targets
+               if pane_state(p["pane"], p["runtime"]) != RIG_TRUST_PROMPT]
+    if changed:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            "A trust prompt changed before Studio could accept it. No keys "
+            "were sent; inspect the rig and try again.", panes=observed)
+
+    accepted = []
+    for item in targets:
+        sent = _tmux("send-keys", "-t", item["pane"], "Enter")
+        if sent.returncode != 0:
+            return _refuse(
+                RIG_PANE_NOT_READY,
+                f"tmux could not accept the trust prompt in {item['pane']}: "
+                f"{(sent.stderr or '').strip() or 'no error text'}.",
+                accepted=accepted, panes=observed)
+        accepted.append(item["pane"])
+
+    # Do not tear the partial rig down until each runtime has consumed and
+    # persisted the choice.  An immediate restart can race that persistence
+    # and present the same prompt again.
+    pending = {p["pane"]: p for p in targets}
+    ready_seen = {pane: 0 for pane in pending}
+    end = time.monotonic() + deadline
+    last = {}
+    while pending and time.monotonic() < end:
+        for pane, item in list(pending.items()):
+            current = pane_state(pane, item["runtime"])
+            last[pane] = current
+            if current == "READY":
+                ready_seen[pane] += 1
+                if ready_seen[pane] >= 3:
+                    del pending[pane]
+            elif current in BLOCKING_PROMPTS.values() and current != RIG_TRUST_PROMPT:
+                return _refuse(
+                    RIG_PANE_NOT_READY,
+                    f"{item.get('name') or pane} moved from repository trust "
+                    f"to another prompt ({current}); Studio will not answer "
+                    "that prompt automatically.", accepted=accepted)
+            else:
+                ready_seen[pane] = 0
+        if pending:
+            time.sleep(poll)
+    if pending:
+        names = ", ".join(str(p.get("name") or pane)
+                          for pane, p in pending.items())
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"Trust was accepted, but these panes did not finish booting "
+            f"before the deadline: {names}.", accepted=accepted, last=last)
+
+    return {"state": "TRUST_ACCEPTED", "session": session,
+            "panes": targets, "accepted": accepted}
+
+
+def _selected_hook_option(screen):
+    match = re.search(r"(?:›|>)\s*([123])\.\s*", str(screen or ""))
+    return int(match.group(1)) if match else None
+
+
+def accept_hook_prompts(session, *, ledger, deadline=60.0, poll=0.5):
+    """Choose "Trust all" only on verified Codex hook-review screens.
+
+    Hook approval is separate from repository trust because hooks execute
+    outside the sandbox.  This function is reached only after the operator
+    explicitly says they reviewed them in Studio. It moves the selector to
+    option 2, verifies that exact label on every target, and only then submits.
+    """
+    if shutil.which("tmux") is None:
+        return _refuse(RIG_NO_TMUX, "tmux is not installed.")
+    if _tmux("has-session", "-t", _exact(session)).returncode != 0:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"tmux session {session!r} is no longer standing; there is no "
+            "hook review to approve.")
+
+    from nxb.keystroke import load_rig
+    record = load_rig(ledger, session)
+    entries = list((record or {}).get("panes") or [])
+    if not entries:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"no recorded panes belong to {session!r}; refusing to send keys "
+            "to unverified tmux targets.")
+    try:
+        live = _live_panes(session)
+    except RigTmuxError as exc:
+        return _refuse(RIG_PANE_NOT_READY, exc.detail)
+
+    targets, blockers, observed = [], [], []
+    for entry in entries:
+        pane = entry.get("pane")
+        runtime = entry.get("runtime")
+        current = (pane_state(pane, runtime)
+                   if pane and pane in live and runtime in READY_MARKERS
+                   else "missing")
+        item = {"name": entry.get("name"), "pane": pane,
+                "runtime": runtime, "state": current}
+        if current == RIG_HOOKS_REVIEW:
+            item["selected"] = _selected_hook_option(capture(pane))
+            targets.append(item)
+        elif current != "READY":
+            blockers.append(item)
+        observed.append(item)
+    if blockers:
+        names = ", ".join(str(p.get("name") or p.get("pane"))
+                          for p in blockers)
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            "Hook recovery is available only when every incomplete pane is "
+            f"still at the hook-review screen. Check: {names}.",
+            panes=observed)
+    if not targets:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"no pane in {session!r} is currently showing hook review, so "
+            "Studio did not send any keys.", panes=observed)
+
+    changed = [p for p in targets
+               if pane_state(p["pane"], p["runtime"]) != RIG_HOOKS_REVIEW]
+    if changed:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            "A hook-review screen changed before Studio could act. No keys "
+            "were sent; inspect the rig and try again.", panes=observed)
+
+    # Move every selector first; do not approve a subset if one pane refuses
+    # to land on the exact "Trust all and continue" choice.
+    for item in targets:
+        selected = _selected_hook_option(capture(item["pane"]))
+        if selected not in (1, 2, 3):
+            return _refuse(
+                RIG_PANE_NOT_READY,
+                f"Studio could not identify the selected hook option in "
+                f"{item['pane']}; no approval was submitted.", panes=observed)
+        if selected != 2:
+            key = "Down" if selected == 1 else "Up"
+            moved = _tmux("send-keys", "-t", item["pane"], key)
+            if moved.returncode != 0:
+                return _refuse(
+                    RIG_PANE_NOT_READY,
+                    f"tmux could not select hook approval in {item['pane']}: "
+                    f"{(moved.stderr or '').strip() or 'no error text'}.",
+                    panes=observed)
+
+    select_end = time.monotonic() + 3.0
+    unselected = list(targets)
+    while unselected and time.monotonic() < select_end:
+        unselected = [p for p in targets
+                      if (pane_state(p["pane"], p["runtime"]) !=
+                          RIG_HOOKS_REVIEW or
+                          _selected_hook_option(capture(p["pane"])) != 2)]
+        if unselected:
+            time.sleep(.1)
+    if unselected:
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            "Studio could not verify 'Trust all and continue' on every pane, "
+            "so it submitted none of them.", panes=observed)
+
+    approved = []
+    for item in targets:
+        sent = _tmux("send-keys", "-t", item["pane"], "Enter")
+        if sent.returncode != 0:
+            return _refuse(
+                RIG_PANE_NOT_READY,
+                f"tmux could not submit hook approval in {item['pane']}: "
+                f"{(sent.stderr or '').strip() or 'no error text'}.",
+                approved=approved, panes=observed)
+        approved.append(item["pane"])
+
+    pending = {p["pane"]: p for p in targets}
+    ready_seen = {pane: 0 for pane in pending}
+    end = time.monotonic() + deadline
+    last = {}
+    while pending and time.monotonic() < end:
+        for pane, item in list(pending.items()):
+            current = pane_state(pane, item["runtime"])
+            last[pane] = current
+            if current == "READY":
+                ready_seen[pane] += 1
+                if ready_seen[pane] >= 3:
+                    del pending[pane]
+            elif (current in BLOCKING_PROMPTS.values() and
+                  current != RIG_HOOKS_REVIEW):
+                return _refuse(
+                    RIG_PANE_NOT_READY,
+                    f"{item.get('name') or pane} moved to another prompt "
+                    f"({current}); Studio will not answer it automatically.",
+                    approved=approved)
+            else:
+                ready_seen[pane] = 0
+        if pending:
+            time.sleep(poll)
+    if pending:
+        names = ", ".join(str(p.get("name") or pane)
+                          for pane, p in pending.items())
+        return _refuse(
+            RIG_PANE_NOT_READY,
+            f"Hooks were approved, but these panes did not finish booting "
+            f"before the deadline: {names}.", approved=approved, last=last)
+    return {"state": "HOOKS_APPROVED", "session": session,
+            "panes": targets, "approved": approved}
 
 
 def rig_roster(ledger, session="nxb"):

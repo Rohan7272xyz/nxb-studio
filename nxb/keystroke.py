@@ -169,7 +169,8 @@ def save_rig(ledger, session, report):
                               # re-enrolled with the orchestrator brief rather
                               # than silently demoted to a worker. [RIG-7]
                               ("name", "runtime", "role", "pane", "enrolment",
-                               "thread_id", "model", "effort")}
+                               "thread_id", "model", "effort", "state",
+                               "reason", "trust_scope")}
                              for p in report["panes"]]}, handle, indent=2)
     return path
 

@@ -37,9 +37,11 @@ kind of "presents as configuration, functions as a comment" gap this project
 was started to close.
 """
 
+import errno
 import json
 import os
 import secrets
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -120,6 +122,19 @@ def stored_token(ledger, *, fresh=False):
     return token
 
 
+def _ordered(models, configured):
+    """Catalog with the CONFIGURED model first, and never missing it.
+
+    Being in a CLI's catalog means the binary knows the name, not that this
+    account can call it -- a `gpt-5.6` from the catalog was refused by the API
+    with "model is not supported". The configured default is the one model
+    proven to work here, so it leads and is never dropped even if the catalog
+    scrape missed it.
+    """
+    out = [m for m in models if m != configured]
+    return ([configured] + out) if configured else out
+
+
 class Studio:
     """Server state: the token, and the ledger every action is scoped to."""
 
@@ -128,7 +143,18 @@ class Studio:
         self.token = token or secrets.token_urlsafe(24)
         self.repo = repo or os.path.dirname(HERE)
         self.lock = threading.Lock()
+        self.managed = os.environ.get("NXB_STUDIO_MANAGED") == "1"
         self._usage = None
+        # WHEN THIS PROCESS STARTED, against when its code was last written.
+        # Four times in one day a server running older code looked like a
+        # broken feature -- a 404 on a route, a button that did nothing, a
+        # figure that never arrived. The operator cannot see the difference
+        # from the page, so the page is told.
+        self.started_at = time.time()
+        self.code_mtime = max(
+            (os.path.getmtime(os.path.join(HERE, f))
+             for f in os.listdir(HERE) if f.endswith((".py", ".html"))),
+            default=0)
 
     # ------------------------------------------------------------- actions
 
@@ -143,6 +169,40 @@ class Studio:
     def personas(self):
         from nxb.personas import load_all
         return {"personas": load_all(self.ledger)}
+
+    def drafts(self):
+        """Durable designs shared with MCP clients, newest first."""
+        from nxb.studio_drafts import list_drafts
+        return {"drafts": list_drafts(self.ledger)}
+
+    def save_draft(self, body):
+        """Persist a browser tab without pretending a half-edit is launchable."""
+        from nxb.studio_drafts import (DraftConflict, DraftError,
+                                       save_draft)
+        try:
+            record = save_draft(
+                self.ledger, body.get("draft"),
+                draft_id=body.get("draft_id"),
+                expected_revision=body.get("expected_revision"),
+                source="studio", strict=False)
+        except DraftConflict as exc:
+            return 409, {"error": str(exc), "state": "CONFLICT"}
+        except DraftError as exc:
+            return 400, {"error": str(exc)}
+        return 200, {"state": "SAVED", "draft": record}
+
+    def delete_draft(self, body):
+        """Closing a tab remains recoverable now that its state is on disk."""
+        from nxb.studio_drafts import (DraftConflict, DraftError,
+                                       delete_draft)
+        try:
+            return 200, delete_draft(
+                self.ledger, body.get("draft_id"),
+                expected_revision=body.get("expected_revision"))
+        except DraftConflict as exc:
+            return 409, {"error": str(exc), "state": "CONFLICT"}
+        except DraftError as exc:
+            return 404, {"error": str(exc)}
 
     def save_persona(self, body):
         from nxb.personas import save
@@ -209,22 +269,31 @@ class Studio:
                         cfg["codex"]["effort"] = value
         except OSError:
             pass
+        from nxb.usage import model_catalog
+        catalog = model_catalog()
         return {
             "_configured": cfg,
             # Documented in `claude --help` as the alias form.
-            "claude_code": {"models": ["opus", "sonnet", "haiku"],
-                            "efforts": ["low", "medium", "high", "xhigh",
-                                        "max"]},
+            "claude_code": {
+                "models": _ordered(catalog["claude_code"],
+                                   cfg["claude_code"].get("model")),
+                # From `claude --help`, which documents these five.
+                "efforts": ["low", "medium", "high", "xhigh", "max"]},
             # Read from config.toml; empty if it says nothing, and the field
             # is free text either way.
-            "codex": {"models": codex,
-                      "efforts": ["low", "medium", "high", "xhigh"]},
+            "codex": {
+                "models": _ordered(catalog["codex"] or codex,
+                                   cfg["codex"].get("model")),
+                "efforts": ["low", "medium", "high", "xhigh"]},
         }
 
     def state(self):
         """Every standing rig and its workers. The page's whole world."""
         from nxb.keystroke import load_rig, rig_sessions
-        from nxb.rig import RigTmuxError, live_rig_sessions, rig_roster
+        from nxb.rig import (RIG_HOOKS_REVIEW, RIG_TRUST_PROMPT,
+                             RIG_UPDATE_PROMPT,
+                             RigTmuxError, capture, live_rig_sessions,
+                             pane_state, rig_roster, trust_scope)
 
         live = set(live_rig_sessions(self.ledger))
         rigs = []
@@ -238,52 +307,123 @@ class Studio:
                                                         session).named}
                 except RigTmuxError:
                     standing = False        # unaskable is not "no workers"
-            rigs.append({
-                "session": session,
-                "standing": standing,
-                "panes": [{"name": p.get("name"), "runtime": p.get("runtime"),
-                           "role": p.get("role", "worker"),
-                           "pane": p.get("pane"),
-                           "enrolled": bool(p.get("enrolment")),
-                           "alive": p.get("name") in names}
-                          for p in record.get("panes", [])],
-            })
-        return {"rigs": rigs, "ledger": self.ledger}
+            panes = []
+            for p in record.get("panes", []):
+                item = {"name": p.get("name"), "runtime": p.get("runtime"),
+                        "role": p.get("role", "worker"),
+                        "pane": p.get("pane"),
+                        "enrolled": bool(p.get("enrolment")),
+                        "alive": p.get("name") in names}
+                if p.get("reason") not in (None, RIG_TRUST_PROMPT,
+                                            RIG_HOOKS_REVIEW,
+                                            RIG_UPDATE_PROMPT):
+                    # Naming/enrolment/time-out failures remain actionable
+                    # even when the runtime screen itself later looks ready.
+                    item["reason"] = p["reason"]
+                if standing and p.get("pane") and p.get("runtime"):
+                    current = pane_state(p["pane"], p["runtime"])
+                    if current in (RIG_TRUST_PROMPT, RIG_HOOKS_REVIEW,
+                                   RIG_UPDATE_PROMPT):
+                        item["reason"] = current
+                    if current == RIG_TRUST_PROMPT:
+                        scope = trust_scope(capture(p["pane"]))
+                        if scope:
+                            item["trust_scope"] = scope
+                panes.append(item)
+            rigs.append({"session": session, "standing": standing,
+                         "panes": panes})
+        return {"rigs": rigs, "ledger": self.ledger,
+                "managed": self.managed,
+                "stale_code": self.code_mtime > self.started_at,
+                "started_at": self.started_at}
+
+    def _launch_args(self, body):
+        """Validate one browser composition and return its rig arguments."""
+        from nxb.rig import compose, compose_agents
+        session = str(body.get("session") or "").strip()
+        if not session or any(c in session for c in " \t:.$'\"\\"):
+            raise ValueError("a session name is required, with no spaces, "
+                             "colons, dots or quotes: tmux and the worker "
+                             "names both have to carry it")
+        work_dir = os.path.expanduser(str(body.get("dir") or "~"))
+        if not os.path.isdir(work_dir):
+            raise ValueError(f"no such directory: {work_dir}")
+        layout = body.get("layout") or "main-horizontal"
+        if body.get("agents"):
+            # The composed form: every node is an individual the operator
+            # named and configured. The count form below stays for the CLI
+            # and for anything that only cares how many.
+            plan = compose_agents(body["agents"], layout=layout)
+        else:
+            workers = [(w["runtime"], int(w["count"]))
+                       for w in body.get("workers", [])
+                       if int(w.get("count", 0))]
+            if not workers:
+                raise ValueError("a fleet with no workers is not a fleet")
+            plan = compose(workers,
+                           orchestrator=body.get("orchestrator") or None,
+                           layout=layout)
+        return session, work_dir, plan
 
     def up(self, body):
         """Stand a composed fleet up. Serialised: two at once would race tmux."""
-        from nxb.rig import compose, compose_agents, stand_up
+        from nxb.rig import stand_up
 
-        session = str(body.get("session") or "").strip()
-        if not session or any(c in session for c in " \t:.$'\"\\"):
-            return 400, {"error": "a session name is required, with no spaces, "
-                                  "colons, dots or quotes: tmux and the "
-                                  "worker names both have to carry it"}
-        work_dir = os.path.expanduser(str(body.get("dir") or "~"))
-        if not os.path.isdir(work_dir):
-            return 400, {"error": f"no such directory: {work_dir}"}
-        layout = body.get("layout") or "main-horizontal"
         try:
-            if body.get("agents"):
-                # The composed form: every node is an individual the operator
-                # named and configured. The count form below stays for the
-                # CLI and for anything that only cares how many.
-                plan = compose_agents(body["agents"], layout=layout)
-            else:
-                workers = [(w["runtime"], int(w["count"]))
-                           for w in body.get("workers", [])
-                           if int(w.get("count", 0))]
-                if not workers:
-                    return 400, {"error": "a fleet with no workers is not a "
-                                          "fleet"}
-                plan = compose(workers,
-                               orchestrator=body.get("orchestrator") or None,
-                               layout=layout)
+            session, work_dir, plan = self._launch_args(body)
         except ValueError as exc:
             return 400, {"error": str(exc)}
         with self.lock:
             report = stand_up(plan, session=session, work_dir=work_dir,
                               ledger=self.ledger)
+        return (200 if report.get("state") == "READY" else 409), report
+
+    def trust_and_retry(self, body):
+        """Accept verified trust prompts, then restart only that partial rig."""
+        from nxb.rig import (accept_trust_prompts, stand_up, tear_down)
+
+        try:
+            session, work_dir, plan = self._launch_args(body)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        with self.lock:
+            accepted = accept_trust_prompts(session, ledger=self.ledger)
+            if accepted.get("state") != "TRUST_ACCEPTED":
+                return 409, accepted
+            gone = tear_down(session)
+            if gone.get("state") != "GONE":
+                return 409, {"state": "REFUSED",
+                             "reason": "rig_pane_not_ready",
+                             "detail": f"Trust was accepted, but {session!r} "
+                                       "could not be restarted safely.",
+                             "trust": accepted, "teardown": gone}
+            report = stand_up(plan, session=session, work_dir=work_dir,
+                              ledger=self.ledger)
+        report["trust_recovery"] = accepted
+        return (200 if report.get("state") == "READY" else 409), report
+
+    def hooks_and_retry(self, body):
+        """Approve verified hook screens, then restart only that partial rig."""
+        from nxb.rig import (accept_hook_prompts, stand_up, tear_down)
+
+        try:
+            session, work_dir, plan = self._launch_args(body)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        with self.lock:
+            approved = accept_hook_prompts(session, ledger=self.ledger)
+            if approved.get("state") != "HOOKS_APPROVED":
+                return 409, approved
+            gone = tear_down(session)
+            if gone.get("state") != "GONE":
+                return 409, {"state": "REFUSED",
+                             "reason": "rig_pane_not_ready",
+                             "detail": f"Hooks were approved, but {session!r} "
+                                       "could not be restarted safely.",
+                             "hooks": approved, "teardown": gone}
+            report = stand_up(plan, session=session, work_dir=work_dir,
+                              ledger=self.ledger)
+        report["hook_recovery"] = approved
         return (200 if report.get("state") == "READY" else 409), report
 
     def forget(self, body):
@@ -379,6 +519,8 @@ def handler_for(studio):
                 return self._send(200, studio.state())
             if path == "/api/personas":
                 return self._send(200, studio.personas())
+            if path == "/api/drafts":
+                return self._send(200, studio.drafts())
             if path == "/api/usage":
                 return self._send(200, studio.usage())
             if path == "/api/models":
@@ -399,8 +541,13 @@ def handler_for(studio):
                 body = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
                 return self._send(400, {"error": "malformed JSON"})
-            routes = {"/api/rig/up": studio.up, "/api/rig/down": studio.down,
+            routes = {"/api/rig/up": studio.up,
+                      "/api/rig/trust-and-retry": studio.trust_and_retry,
+                      "/api/rig/hooks-and-retry": studio.hooks_and_retry,
+                      "/api/rig/down": studio.down,
                       "/api/rig/forget": studio.forget,
+                      "/api/drafts/save": studio.save_draft,
+                      "/api/drafts/delete": studio.delete_draft,
                       "/api/personas/save": studio.save_persona,
                       "/api/personas/delete": studio.delete_persona,
                       "/api/usage/claude": studio.ask_claude_usage}
@@ -435,12 +582,92 @@ def _open_as_app(url, profile):
 
 def serve(ledger, *, port=8787, host="127.0.0.1", open_browser=True,
           app=False, fresh_token=False):
+    # The foreground command doubles as "open Studio" once the LaunchAgent is
+    # installed. It must not punish the operator with EADDRINUSE for having
+    # successfully made Studio always-on.
+    if os.environ.get("NXB_STUDIO_MANAGED") != "1":
+        try:
+            from nxb.studio_service import status as service_status
+            running = service_status(port=port)
+        except Exception:                                      # noqa: BLE001
+            running = {}
+        if running.get("state") == "RUNNING":
+            token = stored_token(ledger, fresh=False)
+            url = f"http://{host}:{int(port)}/?t={token}"
+            opened = None
+            if app:
+                profile = os.path.join(os.path.dirname(ledger), "studio-app")
+                opened = _open_as_app(url, profile)
+            if open_browser and not opened:
+                import webbrowser
+                webbrowser.open(url)
+            print(f"nxb studio is already running as an always-on service: "
+                  f"http://{host}:{int(port)}")
+            print("  opened the existing service; no second server was "
+                  "started.")
+            return 0
+
     studio = Studio(ledger, token=stored_token(ledger, fresh=fresh_token))
-    server = ThreadingHTTPServer((host, port), handler_for(studio))
+    try:
+        server = ThreadingHTTPServer((host, port), handler_for(studio))
+    except OSError as exc:
+        if getattr(exc, "errno", None) == errno.EADDRINUSE:
+            print(f"nxb studio could not start: {host}:{port} is already in "
+                  "use. Run `python3 -m nxb studio status` to check the "
+                  "always-on service.")
+            return 3
+        raise
     url = f"http://{host}:{server.server_port}/?t={studio.token}"
-    print(f"nxb studio: {url}")
-    print("  the token is required on every request; it changes each run.")
-    print("  ctrl-c to stop.")
+    if studio.managed:
+        # The launchd log is not where a long-lived bearer token belongs.
+        print(f"nxb studio service: http://{host}:{server.server_port}")
+        print("  token omitted from the service log; it remains in the "
+              "0600 studio.token file.")
+    else:
+        print(f"nxb studio: {url}")
+        print("  the token is required on every request and persists across "
+              "restarts.")
+        print("  ctrl-c to stop.")
+    # ONE READING PER STUDIO LAUNCH, on a worker thread. Claude will not write
+    # its usage to disk, so the only way to have a number on screen when the
+    # page opens is to ask -- and asking costs a full turn, so it happens once
+    # per server start rather than once per page load or on a timer. Anything
+    # else either shows the operator "unread" forever or spends quota to
+    # measure quota.
+    def _prime():
+        # A FAILURE HERE IS RECORDED, NOT SWALLOWED. The first version caught
+        # everything and passed, so a priming thread that died left the page
+        # saying "reading…" with nothing anywhere saying why. It must not be
+        # fatal to the server, and it must not be silent either.
+        try:
+            studio.usage()               # warms the token cache
+            studio._usage.ask_claude()   # one Claude turn
+        except Exception as exc:                               # noqa: BLE001
+            if studio._usage is not None:
+                studio._usage.claude_error = f"{type(exc).__name__}: {exc}"
+            print(f"  usage priming failed: {exc}")
+
+    threading.Thread(target=_prime, daemon=True).start()
+
+    if studio.managed:
+        # launchd KeepAlive is the reloader: exit this old process when Python
+        # or HTML changes and launchd immediately starts the new code. A
+        # foreground server does not do this because exiting there would make
+        # the page go offline instead of refreshing it.
+        def _reload_on_change():
+            while True:
+                time.sleep(2)
+                current = max(
+                    (os.path.getmtime(os.path.join(HERE, name))
+                     for name in os.listdir(HERE)
+                     if name.endswith((".py", ".html"))), default=0)
+                if current > studio.code_mtime:
+                    print("  Studio code changed; handing restart to launchd.")
+                    server.shutdown()
+                    return
+
+        threading.Thread(target=_reload_on_change, daemon=True).start()
+
     if app:
         # A DEDICATED PROFILE, deliberately. Sharing the operator's normal
         # browser profile would put his logged-in sessions in the same window

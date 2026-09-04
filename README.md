@@ -81,6 +81,24 @@ someone's machine with a failing suite.
 
 ### Phase 3 — the studio
 
+Recommended on macOS — install it once as an always-on user service:
+
+```sh
+python3 -m nxb studio install
+```
+
+It starts at login, launchd restarts it after a crash, and the process no
+longer occupies a terminal. The existing Studio token, drafts, and rigs are
+preserved. Check or manage it with:
+
+```sh
+python3 -m nxb studio status
+python3 -m nxb studio restart
+python3 -m nxb studio uninstall   # preserves token, drafts, ledger, and logs
+```
+
+The foreground form remains useful for development or non-macOS hosts:
+
 ```sh
 python3 -m nxb studio
 ```
@@ -97,6 +115,13 @@ page can be pinned as an app; `--fresh-token` rotates it.
 
 To make it a real app: open the URL in Safari → **File → Add to Dock**. On
 Chrome or Brave, `python3 -m nxb studio --app` gives a chromeless window.
+
+Studio drafts are durable files under `~/.nxb/studio-drafts/`, not private
+browser state. The same NXB MCP server exposes catalog, validate, save, list,
+get, and recoverable-delete tools, so **any MCP-speaking LLM can put a complete
+workflow on the canvas in one tool call**. An open Studio imports those changes
+within five seconds. Draft tools never launch agents; **Bring it to life stays
+the operator's gate**.
 
 ### Phase 4 — **ASK** before the first fleet
 
@@ -123,6 +148,18 @@ tmux attach -t demo                          # look at the panes
 and was enrolled. It says nothing about whether the agent inside can reach its
 model. **Read the panes.** A rig came up READY here once while a worker sat on
 a 400 for an unsupported model.
+
+### Phase 4b — check the assumptions hold
+
+```sh
+python3 -m nxb doctor
+```
+
+Run this now, and again after any runtime update. nxb reads screens, parses
+prose and passes flags, and a CLI release can void any of that silently.
+`DRIFT` means an assumption no longer holds and a human should look at what
+the runtime does now. `--deep` also boots each runtime to verify its readiness
+marker and costs one Claude turn.
 
 ### Phase 5 — hand it work
 
@@ -200,5 +237,5 @@ zero.
 | `FINDINGS.json` | every defect found, with an owner and what would close it |
 | `ledger/LEDGER.md` | task history |
 
-State lives outside the repo, in `~/.nxb/`: the ledger, rig records, launch
-briefs, saved personas and the usage cache.
+State lives outside the repo, in `~/.nxb/`: the ledger, Studio drafts, rig
+records, launch briefs, saved personas and the usage cache.

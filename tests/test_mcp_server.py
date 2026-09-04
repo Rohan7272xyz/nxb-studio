@@ -29,10 +29,14 @@ class Protocol(unittest.TestCase):
         self.assertEqual(r["serverInfo"]["name"], "nxb")
         self.assertIn("tools", r["capabilities"])
 
-    def test_exactly_three_tools_are_offered(self):
+    def test_dispatch_and_studio_tools_are_offered(self):
         names = [t["name"] for t in rpc("tools/list")["result"]["tools"]]
         self.assertEqual(sorted(names),
-                         ["nxb_collect", "nxb_dispatch", "nxb_pending"])
+                         ["nxb_collect", "nxb_dispatch", "nxb_pending",
+                          "nxb_studio_catalog", "nxb_studio_draft_delete",
+                          "nxb_studio_draft_get", "nxb_studio_draft_list",
+                          "nxb_studio_draft_save",
+                          "nxb_studio_draft_validate"])
 
     def test_a_notification_gets_no_response(self):
         self.assertIsNone(mcp.handle({"jsonrpc": "2.0",
@@ -111,6 +115,80 @@ class Refusals(unittest.TestCase):
     def test_pending_reports_a_count_so_empty_and_firing_differ(self):
         r = self._call("nxb_pending", {})
         self.assertIn("uncollected", json.loads(r["content"][0]["text"]))
+
+
+class StudioDraftTools(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.environ[mcp.LEDGER_ENV] = os.path.join(self.tmp, "l.db")
+        self.spec = {
+            "session": "gate",
+            "working_directory": "~",
+            "agents": [
+                {"name": "Captain", "role": "orchestrator",
+                 "runtime": "codex"},
+                {"name": "Judge", "role": "worker",
+                 "runtime": "claude_code"},
+            ],
+        }
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        os.environ.pop(mcp.LEDGER_ENV, None)
+
+    def _call(self, name, args=None):
+        result = rpc("tools/call", {"name": name,
+                                    "arguments": args or {}})["result"]
+        body = result["content"][0]["text"]
+        return result, json.loads(body) if body.startswith(("{", "[")) else body
+
+    def test_one_call_builds_a_durable_unlaunched_workflow(self):
+        result, body = self._call("nxb_studio_draft_save", self.spec)
+        self.assertFalse(result.get("isError", False))
+        self.assertEqual(body["state"], "SAVED")
+        self.assertFalse(body["launched"])
+        draft = body["draft"]
+        _, listed = self._call("nxb_studio_draft_list")
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["drafts"][0]["draft_id"], draft["draft_id"])
+        _, read = self._call("nxb_studio_draft_get",
+                             {"draft_id": draft["draft_id"]})
+        self.assertEqual(read["agents"][0]["name"], "Captain")
+
+    def test_validate_has_no_write_side_effect(self):
+        _, valid = self._call("nxb_studio_draft_validate", self.spec)
+        self.assertTrue(valid["valid"])
+        _, listed = self._call("nxb_studio_draft_list")
+        self.assertEqual(listed["count"], 0)
+
+    def test_a_bad_workflow_is_a_readable_tool_error(self):
+        bad = dict(self.spec, agents=[])
+        result, message = self._call("nxb_studio_draft_save", bad)
+        self.assertTrue(result["isError"])
+        self.assertIn("no agents", message)
+
+    def test_update_and_delete_both_require_the_revision_read(self):
+        _, created = self._call("nxb_studio_draft_save", self.spec)
+        draft = created["draft"]
+        changed = dict(self.spec, draft_id=draft["draft_id"],
+                       expected_revision=draft["revision"])
+        changed["agents"] = [dict(a) for a in self.spec["agents"]]
+        changed["agents"][1]["name"] = "Independent Judge"
+        _, updated = self._call("nxb_studio_draft_save", changed)
+        self.assertEqual(updated["draft"]["revision"], 2)
+        stale, _ = self._call("nxb_studio_draft_delete", {
+            "draft_id": draft["draft_id"], "expected_revision": 1})
+        self.assertTrue(stale["isError"])
+        _, deleted = self._call("nxb_studio_draft_delete", {
+            "draft_id": draft["draft_id"], "expected_revision": 2})
+        self.assertEqual(deleted["state"], "TRASHED")
+        self.assertTrue(os.path.exists(deleted["recoverable_from"]))
+
+    def test_the_catalog_and_save_descriptions_keep_launch_human_gated(self):
+        tools = {t["name"]: t for t in rpc("tools/list")["result"]["tools"]}
+        self.assertIn("DOES NOT launch",
+                      tools["nxb_studio_draft_save"]["description"])
+        self.assertFalse(any("launch" in name for name in tools))
 
 
 class TheGrant(unittest.TestCase):
