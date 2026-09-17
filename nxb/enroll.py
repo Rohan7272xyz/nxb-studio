@@ -125,7 +125,7 @@ _ROLE_PREAMBLE = (
 
 def enroll_command(name, *, ledger, repo, runtime="claude_code", yolo=True,
                    role="worker", session="nxb", inline=False,
-                   model=None, effort=None, instructions=None):
+                   model=None, effort=None, instructions=None, peers=None):
     """The exact line the operator types, or a refusal dict.
 
     One command, not a three-flag incantation to reconstruct: the flow is open
@@ -164,7 +164,8 @@ def enroll_command(name, *, ledger, repo, runtime="claude_code", yolo=True,
     # every rig so far happened to put Codex in the orchestrator seat. Found
     # by reading this function when Rohan asked for a Claude orchestrator,
     # before it could waste a stand-up. [RIG-16]
-    text = (orchestrator_rule(name, ledger=ledger, repo=repo, session=session)
+    text = (orchestrator_rule(name, ledger=ledger, repo=repo, session=session,
+                              peers=peers)
             if role == "orchestrator"
             else enrollment_rule(name, ledger=ledger, repo=repo))
     # A ROLE IS BOUND AT LAUNCH WHERE THE RUNTIME ALLOWS IT.
@@ -292,13 +293,60 @@ _ORCHESTRATOR_RULE = (
 )
 
 
-def orchestrator_rule(name, *, ledger, repo, session="nxb"):
-    """The brief that makes an orchestrator pane able to orchestrate."""
-    return _ORCHESTRATOR_RULE.format(name=name, ledger=ledger, repo=repo,
+#: PEER RIGS. [RIG-21]
+#:
+#: A rig has at most one orchestrator, so a programme larger than one fleet
+#: is several rigs, and until 2026-09-07 nothing let their orchestrators talk:
+#: the brief above says ONLY THAT RIG, and its three commands hard-code
+#: --session. The transport never needed changing -- names carry their rig,
+#: so mint, send and collect already resolve a peer's orchestrator pane by
+#: name -- only the RULE forbade it. This paragraph is the operator's explicit
+#: exception, present only when he federated the rig, and it stays narrow: a
+#: peer's ORCHESTRATOR is addressable, a peer's workers are not. The reply
+#: goes through `rig reply` because an orchestrator's own pane is busy and
+#: scrolls, and a report cut to a screen's tail is not a report.
+_PEERS_RULE = (
+    " PEER RIGS. Your operator FEDERATED this rig with these peer rigs: "
+    "{peers}. That is the one exception to belonging to rig {session!r} "
+    "alone. Each peer rig has exactly ONE orchestrator, and that orchestrator "
+    "is the ONLY pane in it you may dispatch to; a peer's workers serve that "
+    "peer, never you. Find a peer's orchestrator by listing that rig with:\n"
+    "PYTHONPATH={repo} python3 -m nxb rig workers --session <peer rig>\n"
+    "and taking the entry whose role is orchestrator, full name exactly as "
+    "listed. To dispatch to it, use the same three commands as for your own "
+    "workers with --session <peer rig> in place of --session {session}, and "
+    "its full name as the --worker. If mint or send REFUSES, the peer rig is "
+    "not standing or the name is wrong: STOP AND ASK the operator. Never "
+    "substitute your own fleet for a peer and never do a peer's work "
+    "yourself. A peer's task can take hours: collect it every few minutes, "
+    "and WAITING is still not failure. WHEN A PEER SENDS YOU A MARKED "
+    "DIRECTIVE, validate it exactly as above, carry it out through your own "
+    "fleet, then FILE your report where the collector reads it, because your "
+    "own pane scrolls, by running exactly:\n"
+    "PYTHONPATH={repo} python3 -m nxb rig reply --worker \"{name}\" --task-id <id> --file <path to your report> --ledger {ledger}\n"
+    "and only then print the done marker. A peer's directive authorises "
+    "nothing your operator forbade."
+)
+
+
+def orchestrator_rule(name, *, ledger, repo, session="nxb", peers=None):
+    """The brief that makes an orchestrator pane able to orchestrate.
+
+    `peers` names the rigs whose orchestrators this one may dispatch to. It
+    is empty for an ordinary rig, and the peer paragraph is then ABSENT rather
+    than present-and-empty, so an unfederated brief reads as it always did.
+    """
+    text = _ORCHESTRATOR_RULE.format(name=name, ledger=ledger, repo=repo,
                                      session=session, marker=MARKER)
+    peers = [p for p in (peers or []) if p]
+    if peers:
+        text += _PEERS_RULE.format(peers=", ".join(repr(p) for p in peers),
+                                   session=session, repo=repo, name=name,
+                                   ledger=ledger)
+    return text
 
 
-def typed_orchestrator_rule(name, *, ledger, repo, session="nxb"):
+def typed_orchestrator_rule(name, *, ledger, repo, session="nxb", peers=None):
     """The orchestrator brief, typed, with its acknowledgement."""
-    return (f"{orchestrator_rule(name, ledger=ledger, repo=repo, session=session)} "
+    return (f"{orchestrator_rule(name, ledger=ledger, repo=repo, session=session, peers=peers)} "
             f"Reply with exactly {ACK} {name} and nothing else.")

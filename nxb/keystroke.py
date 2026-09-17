@@ -69,6 +69,22 @@ _REPLY_PROTOCOL = (
     "done; {tail}"
 )
 
+#: FILING. [RIG-21]
+#:
+#: The collector reads a pane's SCREEN, and a Claude Code pane scrolls its
+#: transcript internally, so a long answer, or one followed by more output,
+#: is cut to a line budget or lost outright. An answer FILED next to the
+#: ledger is read first and whole. Present only when the dispatcher knows its
+#: ledger and repo, which `send_directive` always does; an unfiled answer
+#: still collects off the screen as before, so this degrades, never gates.
+_FILING_PROTOCOL = (
+    " Before you finish, FILE your full answer so it can be collected even "
+    "after this pane scrolls, by running exactly: PYTHONPATH={repo} python3 "
+    "-m nxb rig reply --worker \"{worker}\" --task-id {task_id} --file <path "
+    "to a file containing your answer> --ledger {ledger} (a short answer may "
+    "use --message \"<answer>\" instead)."
+)
+
 #: The last words of the directive, and therefore THE BOUNDARY between what
 #: nxb typed and what the worker said.
 #:
@@ -104,7 +120,7 @@ def done_marker(task_id):
     return DONE_MARKER.format(task_id=task_id)
 
 
-def marked_directive(task_id, worker, body):
+def marked_directive(task_id, worker, body, *, ledger=None, repo=None):
     """The exact text typed into a pane. Always marked; there is no other form.
 
     The marker leads so a worker can classify the message from its first
@@ -116,8 +132,12 @@ def marked_directive(task_id, worker, body):
         raise ValueError("a directive cannot be typed without a task id")
     if not worker or not str(worker).strip():
         raise ValueError("a directive cannot be typed without a worker")
+    filing = (_FILING_PROTOCOL.format(repo=repo, worker=worker,
+                                      task_id=task_id, ledger=ledger)
+              if ledger and repo else "")
     return (f"{MARKER} task_id={task_id} worker={worker!r} :: "
             f"{' '.join(str(body).split())}"
+            + filing
             + _REPLY_PROTOCOL.format(done=done_marker(task_id),
                                      tail=_PROTOCOL_TAIL))
 
@@ -164,6 +184,9 @@ def save_rig(ledger, session, report):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump({"session": report["session"],
+                   # Which rigs this one's orchestrator may dispatch to, so a
+                   # /clear re-brief carries the same federation. [RIG-21]
+                   "peers": list(report.get("peers") or []),
                    "panes": [{k: p.get(k) for k in
                               # `role` persists so a cleared ORCHESTRATOR is
                               # re-enrolled with the orchestrator brief rather
@@ -173,6 +196,55 @@ def save_rig(ledger, session, report):
                                "reason", "trust_scope")}
                              for p in report["panes"]]}, handle, indent=2)
     return path
+
+
+def reply_path(ledger, task_id):
+    """Where a worker FILES its answer: next to the ledger, by task id. [RIG-21]"""
+    safe = "".join(c if c.isalnum() or c in "-_." else "-"
+                   for c in str(task_id))
+    return os.path.join(os.path.dirname(ledger), "replies", f"{safe}.json")
+
+
+def read_reply(ledger, task_id):
+    """The filed answer for `task_id`, or None. Reading consumes nothing."""
+    try:
+        with open(reply_path(ledger, task_id), encoding="utf-8") as handle:
+            filed = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return filed if isinstance(filed, dict) else None
+
+
+def file_reply(worker, task_id, answer, *, ledger):
+    """File `worker`'s answer to `task_id` where `collect_reply` reads FIRST.
+
+    The id is validated the way the worker validated the directive, with the
+    registry's own verdict: an answer filed under an id minted for someone
+    else is refused, so a reply cannot land in another worker's task through
+    a typo any more than a directive can be accepted through one.
+    """
+    import datetime
+    from nxb.tasks import TaskRegistry
+    reg = TaskRegistry(ledger)
+    try:
+        verdict = reg.validate(task_id, worker)
+    finally:
+        reg.close()
+    if not verdict.get("valid"):
+        return {"state": "REFUSED", "worker": worker, "task_id": task_id,
+                "verdict": verdict.get("verdict"),
+                "detail": verdict.get("detail")}
+    path = reply_path(ledger, task_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    record = {"task_id": task_id, "worker": worker, "answer": str(answer),
+              "filed_at": datetime.datetime.now(
+                  datetime.timezone.utc).isoformat()}
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, indent=2)
+    os.replace(tmp, path)
+    return {"state": "FILED", "worker": worker, "task_id": task_id,
+            "path": path, "chars": len(record["answer"])}
 
 
 def _wrapped_index(lines, needle, *, span=4):
@@ -239,6 +311,16 @@ def collect_reply(worker, task_id, *, ledger, session=None, tail_lines=40,
         return refusal
     pane = rig["pane"]
 
+    # A FILED answer is read first, and whole: it is the one form of reply
+    # that neither a scrolling TUI nor a line budget can cut. [RIG-21]
+    filed = read_reply(ledger, task_id)
+    if filed is not None and filed.get("worker") == worker:
+        return {"state": "ANSWERED", "worker": worker, "task_id": task_id,
+                "pane": pane, "session": session, "runtime": rig["runtime"],
+                "anchored": True, "source": "outbox",
+                "filed_at": filed.get("filed_at"),
+                "answer": str(filed.get("answer", "")).strip()}
+
     lines = capture_history(pane).splitlines()
 
     # THE ORDER MATTERS. Find where the directive ENDS first, and only then
@@ -282,7 +364,8 @@ def collect_reply(worker, task_id, *, ledger, session=None, tail_lines=40,
            "pane": pane, "session": session, "runtime": rig["runtime"],
            # Whether the START of the answer is known, or merely budgeted.
            # The END is always exact: it is this task's own marker.
-           "anchored": anchored, "answer": "\n".join(body).strip()}
+           "anchored": anchored, "source": "pane",
+           "answer": "\n".join(body).strip()}
     if not anchored:
         out["detail"] = (f"the directive scrolled out of the pane, so the "
                          f"answer's end is exact (this task's marker) and its "
@@ -385,7 +468,9 @@ def send_directive(worker, task_id, body, *, ledger, session=None):
         return {"state": "REFUSED", "reason": KEYSTROKE_UNKNOWN_WORKER,
                 "detail": f"{worker!r} is not enrolled, so a marked "
                           f"directive would not be validated by it."}
-    send_line(pane["pane"], marked_directive(task_id, worker, body))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    send_line(pane["pane"], marked_directive(task_id, worker, body,
+                                             ledger=ledger, repo=repo))
     return {"state": "TYPED", "worker": worker, "pane": pane["pane"],
             "session": session, "task_id": task_id,
             "runtime": pane["runtime"], "marker": MARKER,

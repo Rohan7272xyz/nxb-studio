@@ -1313,14 +1313,15 @@
     {
       "id": "STUDIO-3",
       "severity": "medium",
-      "state": "FIXED",
+      "state": "REVERSED",
       "owner": "Orchestrator 3",
       "found_in": "nxb-065",
       "fixed_in": "nxb-065",
       "title": "The model picker offered a model the runtime rejects, because I typed the list from memory",
       "summary": "A closed dropdown listed gpt-5.6 among Codex's models. The flag plumbing was correct and the VALUE was invented: the live pane came back with a 400, 'The gpt-5.6 model is not supported'.",
       "note": "Caught by reading the pane after the stand-up rather than by trusting that a green READY meant a working fleet -- the rig was READY, the pane was erroring. The distinction worth keeping: the control WORKED and its OPTIONS were wrong, which a test of the plumbing would never have caught, and a closed picker presents an invented list with the authority of a discovered one. Codex's suggestions now come from the operator's own ~/.codex/config.toml, the file that runtime already obeys; Claude's aliases are quoted from its --help. Both fields are FREE TEXT with those as datalist suggestions, so a suggestion I get wrong costs a retype instead of blocking a value that would have worked.",
-      "closes_when": "Model and effort are free-text fields whose suggestions are read from each runtime's own configuration rather than written from memory."
+      "closes_when": "Model and effort are free-text fields whose suggestions are read from each runtime's own configuration rather than written from memory.",
+      "reason": "The DIAGNOSIS held and the REMEDY did not. A closed picker typed from memory offered a model the API refused, and I concluded the field should be free text. Rohan: 'a drop down means i have to select something.' He is right -- typed input means a typo reaches the runtime and fails in a pane minutes later. The real fix was never free text; it was READING the options instead of inventing them. Superseded by STUDIO-19."
     },
     {
       "id": "STUDIO-4",
@@ -1513,6 +1514,134 @@
       "summary": "The splitters were added to the markup, making #body five children, and the CSS that should have turned it into a flex row never applied. Under the old three-column grid those five wrapped onto a second row, dropping the inspector underneath the canvas.",
       "note": "ROHAN: 'just opened the new layout .. its worse. what happened?' THE MECHANISM IS THE FINDING AND IT IS NOT ABOUT CSS. The edit was a str.replace whose anchor no longer matched the file, and str.replace DOES NOT RAISE -- it returns the string unchanged and reports nothing. Other edits in the same batch asserted their anchors; this one did not, so the markup change landed and its matching style change did not. Then I verified the result by running the JS through a parser, which cannot see CSS, and shipped a page I had never looked at. Two rules this project already holds, both broken in one step: a harness that silently does nothing reports a clean pass, and the author's own tests do not test the author. The guard now asserts the LAYOUT MODE and the child ORDER, because those are the facts that were silently wrong, and every scripted edit asserts its anchor.",
       "closes_when": "The page asserts it is a flex row with rail, stage and inspector in order, and no scripted edit can fail without raising."
+    },
+    {
+      "id": "STUDIO-19",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-073",
+      "fixed_in": "nxb-073",
+      "_authored_by": "Rohan",
+      "title": "Model and effort are pickers again, with options read from each installed CLI instead of invented",
+      "summary": "They were free text, which was my over-correction after a hardcoded list offered a model the API refused. Typed input means a typo reaches the runtime and surfaces as a pane error minutes later.",
+      "note": "THE LESSON IS ABOUT THE OVER-CORRECTION. The diagnosis in STUDIO-3 was right -- an invented list is worse than a text box because it carries false authority -- and the remedy was wrong. The problem was never that the field was a picker; it was that I wrote its contents from memory. Options now come from each installed binary's own catalog: Claude's alias forms and Codex's gpt-5.x ids, extracted from the executables on this machine, with the operator's CONFIGURED model placed first because that is the only one proven to work here. A value already set but absent from the catalog is kept as an option, so opening an older design never silently rewrites what it asked for. One honest limit recorded in the code: being in a binary's catalog means the CLI knows the name, not that this account can call it. VERIFIED END TO END with NON-DEFAULT picks, so a pass could not be the runtime's own config doing the work: claude --model haiku --effort low reached the process and its pane reported 'Haiku 4.5'; codex -m gpt-5.6-terra -c model_reasoning_effort=high reached the process and its pane reported 'gpt-5.6-terra high'.",
+      "closes_when": "Model and effort are selected rather than typed, their options are read from the installed CLIs, and a non-default pick is proven to reach the launched process."
+    },
+    {
+      "id": "STUDIO-20",
+      "severity": "medium",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-073",
+      "fixed_in": "nxb-073",
+      "_authored_by": "Rohan",
+      "title": "Usage read inconsistently across runtimes, and Claude sat at 'unread' behind a button that 404ed",
+      "summary": "Codex showed a bare 40% that never said used or remaining. Claude showed 'unread' with a check button, and the button hit a route the operator's running server predated.",
+      "note": "Three separate things behind one complaint. FIRST, the ambiguity: the field is `used_percent`, so 40% means 40% SPENT, and both runtimes now say 'used' rather than leaving a number to be guessed at -- a usage figure whose direction is unclear is worse than none when it is what a fleet gets designed around. SECOND, the 404: the studio server had been running since before the route existed, which is the third time today a stale server has looked like a broken feature. THIRD, and the real fix: Claude's reading is now taken ONCE PER SERVER LAUNCH on a worker thread, so a number is on screen when the page opens instead of the word 'unread' and a button. Once per launch and not per page load, because each reading is a full Claude turn; the manual refresh stays for when it goes stale. Also removed the token counter from the top bar as noise, and Pane preview now says 'coming soon' rather than logging an error for a button that did not fail.",
+      "closes_when": "Both runtimes report percent USED in the same words, Claude's figure is present without the operator asking, and no control reports an error for something that merely is not built."
+    },
+    {
+      "id": "DRIFT-1",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-074",
+      "fixed_in": "nxb-074",
+      "_authored_by": "Rohan",
+      "title": "Nothing detected when a runtime update voided an assumption, and eight classes of assumption were exposed",
+      "summary": "nxb reads screens, parses prose, greps binaries and passes flags. Every one is a contract a vendor never agreed to, and an update can void any of them silently. Two broke in a single afternoon before anything existed to notice.",
+      "note": "Rohan asked the right question ahead of a release he knows is coming: 'how about how we handle when new models, updates, etc drop? this is imperative.' Counted: model-name patterns, readiness markers, blocking prompts, the rename regex, five launch flags, the /usage wording, the Codex rollout shape and the Claude transcript shape. `nxb doctor` asks all of them at once; `--deep` also boots each runtime to read its real screen and checks the /usage wording. Exit is non-zero only on DRIFT. IT DELIBERATELY FIXES NOTHING: a drifted assumption needs a person to look at what the runtime does now, because code that guessed and was confidently wrong is the entire failure being caught. Runtime versions are recorded in contract/runtime-versions.json so a later run can say what moved.",
+      "closes_when": "Every assumption nxb makes about a runtime is checked by one command that reports drift and changes nothing."
+    },
+    {
+      "id": "DRIFT-2",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-074",
+      "fixed_in": "nxb-074",
+      "title": "The drift detector's first run was wrong in both directions, from grepping binaries for screen text",
+      "summary": "It reported DRIFT on a Codex marker that was present, because it read the JS launcher instead of the native binary it shells out to. It reported OK on a Claude marker that was absent, because two markers are listed and only one was missing. Grepping a binary cannot verify a string the runtime assembles at run time.",
+      "note": "THE GUARD FAILING THE WAY IT WAS WRITTEN TO CATCH. This project already records that a guard reporting something false teaches people to ignore it, and that a readiness check must test the thing you will actually use -- a rule learned when a rename check passed while the thing it stood for was broken. Markers are now verified by BOOTING each runtime in a throwaway tmux pane under --deep and reading the screen, which costs a process start and no tokens because nothing is ever sent. Without --deep the check says it was not done rather than guessing. The model-name sweep, which surfaced claude-desktop-3p and claude-eval-9, is a WATCH and cannot redden a run: a heuristic that fails the build is a build people stop reading.",
+      "closes_when": "Readiness markers are verified by booting, an unperformed check says so, and no heuristic can fail the run."
+    },
+    {
+      "id": "DRIFT-3",
+      "severity": "medium",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-074",
+      "fixed_in": "nxb-074",
+      "_authored_by": "Rohan",
+      "title": "A model released today would be unreachable until someone widened a regex",
+      "summary": "Both catalogs are extracted with patterns that whitelist today's naming -- Claude's four family aliases, Codex's gpt-5.x. A new family matches nothing, so the picker would silently not offer it.",
+      "note": "Verified rather than assumed: 'astra', 'gpt-6' and 'gpt-5.7-astra' were each tested against both patterns and matched none. Two answers, because one alone is not enough. The doctor WATCHES for model-shaped names its own pattern cannot match, so a release shows up as a line to read rather than as silence. And the picker carries an 'other\u2026' option that takes a typed name straight through to the runtime -- without it the picker would be strictly worse than the text box it replaced on the one day that matters most, release day. Typing is the exception there, not the default.",
+      "closes_when": "A model the extractor cannot see is still selectable, and the doctor surfaces names the pattern misses."
+    },
+    {
+      "id": "STUDIO-21",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-074",
+      "fixed_in": "nxb-074",
+      "_authored_by": "Rohan",
+      "title": "The usage bar said 'counting\u2026' and 'reading\u2026' forever, and a swallowed exception was why",
+      "summary": "`read()` kicked a fresh scan on every poll, so `busy` was true whenever it was read and the page never stopped saying counting. Separately the Claude priming thread was wrapped in a bare except-pass, so any failure left 'reading\u2026' on screen with the reason discarded.",
+      "note": "Rohan: 'it shows claude reading\u2026 counting\u2026 which is not good.' Both mine, and the second is this project's founding defect written by me in a docstring-lined file about not hiding failures. A scan now runs at most once every 20 seconds, and a failed Claude reading is STORED and shown with its reason and a retry, instead of an ellipsis. FOURTH TIME TODAY a stale server looked like a broken feature, so the studio now compares its own start time against the mtime of its source and the page says 'server is running older code \u2014 restart it' rather than leaving the operator to diagnose a 404 as a missing feature.",
+      "closes_when": "A finished scan stops saying it is counting, a failed reading names its reason, and a server running older code says so."
+    },
+    {
+      "id": "STUDIO-22",
+      "severity": "medium",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-075",
+      "fixed_in": "nxb-075",
+      "_authored_by": "Rohan",
+      "title": "A browser that had never seen the studio showed an empty canvas beside a panel listing four live rigs",
+      "summary": "Tabs are browser storage; the fleet is on the machine. Opening the studio in a new browser or a new profile drew nothing, while the Live rigs panel right next to it listed four standing rigs with all their agents.",
+      "note": "Surfaced by putting the studio on a second machine, where Edge ran a fresh profile. It is not a display problem: any new browser, any new profile, any cleared site data would have shown the same empty board next to a correct list. The studio now adopts every standing rig into tabs ON FIRST RUN, guarded hard -- once per page, and only into a board with a single empty tab, so it can never overwrite a drawing anyone cares about. The reconstruction is shared with the `open` button rather than duplicated, and the layout was fixed while it was being factored out: the orchestrator is centred over its workers instead of sitting at a fixed offset that overlapped them on a wide fleet.",
+      "closes_when": "A browser with no stored tabs shows the rigs that are actually standing."
+    },
+    {
+      "id": "SECRET-1",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-075",
+      "fixed_in": "nxb-075",
+      "title": "A live studio token was written into the repository working tree",
+      "summary": "`stored_token` writes `studio.token` beside whatever ledger path it is handed, so anything run with a ledger inside the repo drops a 32-character bearer token into the tree -- one directory away from a public remote.",
+      "note": "Found in `git status` as an untracked file, not by any guard. NEVER COMMITTED and never reached GitHub -- checked against the repo's whole history and against the live public contents, and it was not even the token in use -- so this is a near miss rather than a disclosure. That is luck, not design: nothing stopped it being swept into a commit, and this repo has had its shared index swept twice before. The .gitignore now covers studio.token at any depth, plus *.db and rig-*.json, which land the same way. THE DEEPER SHAPE, left open: a function that writes a secret to a path derived from an argument will eventually be handed the wrong argument, and the CLI's own refusal of relative ledger paths does not protect callers that bypass it.",
+      "closes_when": "A token written beside a ledger inside the repo cannot be committed, and the public remote is verified clean."
+    },
+    {
+      "id": "RIG-21",
+      "severity": "high",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-076",
+      "fixed_in": "nxb-076",
+      "_authored_by": "Rohan",
+      "title": "The rig could not build more than about six panes, and said so as a bare tmux error",
+      "summary": "Every split halves the pane it lands in, and the layout was applied once at the END. So the window ran out of room and tmux refused with 'no space for a new pane'. Asking for eleven agents produced five and a refusal nobody could act on.",
+      "note": "MEASURED with plain tmux on a 240x60 window, no runtimes involved and nothing spent: 5 panes without a layout between splits, 15 with. So the ceiling was real and undocumented, and every fleet built until now happened to sit under it. Fixed by redistributing after EVERY split. The refusal also now says which pane it died on, out of how many, with a remedy -- 'split-window failed' on its own tells an operator nothing about whether they asked for too much.",
+      "closes_when": "A fleet of at least eleven agents stands up, and a split that genuinely cannot fit names the pane and the count."
+    },
+    {
+      "id": "RIG-22",
+      "severity": "low",
+      "state": "FIXED",
+      "owner": "Orchestrator 3",
+      "found_in": "nxb-076",
+      "fixed_in": "nxb-076",
+      "_authored_by": "Rohan",
+      "title": "Half a mixed fleet's pane borders read 'rohan' instead of the agent's name",
+      "summary": "Claude titles its pane with the worker name; Codex titles it with the working directory. In a mixed fleet the operator had to count panes to know who was who.",
+      "note": "The rig already knows every name, so it is written to a tmux USER OPTION -- which a runtime cannot overwrite, unlike the pane title the two vendors are competing over. Each agent also gets its own border colour. Colouring by RUNTIME was the obvious move and is the wrong one: a mixed fleet then has two colours, and eleven panes in two colours read as one undifferentiated block. The orchestrator keeps the studio's accent so the eye lands on it first.",
+      "closes_when": "Every pane border shows its agent's name and a distinct colour regardless of which runtime is inside it."
     }
   ]
 }

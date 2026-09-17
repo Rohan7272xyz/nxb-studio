@@ -103,6 +103,14 @@ _DRAFT_PROPERTIES = {
         "type": "array", "minItems": 1, "items": _AGENT_SCHEMA,
         "description": "The complete fleet. Each entry becomes one Studio node.",
     },
+    "peers": {
+        "type": "array", "items": {"type": "string"},
+        "description": ("Optional peer rigs, by session name. This rig's "
+                        "orchestrator may then dispatch to each peer's "
+                        "ORCHESTRATOR (never its workers) with the same "
+                        "mint/send/collect commands. Each peer rig is its "
+                        "own draft, brought to life separately."),
+    },
     "view": {
         "type": "object",
         "properties": {
@@ -370,7 +378,8 @@ def call_tool(name, args):
                                        validate as validate_draft)
 
         spec = {key: args.get(key) for key in
-                ("session", "working_directory", "layout", "agents", "view")
+                ("session", "working_directory", "layout", "agents", "peers",
+                 "view")
                 if args.get(key) is not None}
         try:
             if name == "nxb_studio_draft_validate":

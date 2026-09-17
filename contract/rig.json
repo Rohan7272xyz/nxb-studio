@@ -14,8 +14,10 @@
     "keystroke_unknown_worker",
     "keystroke_no_rig",
     "keystroke_ambiguous_rig",
-    "rig_tmux_unavailable"
+    "rig_tmux_unavailable",
+    "rig_peer_invalid"
   ],
+  "_peer_rigs": "A rig has at most one orchestrator, so a programme larger than one fleet is several rigs. `peers` names the OTHER rigs whose orchestrators this rig's orchestrator may dispatch to, with the same mint/send/collect and --session <peer>; a peer's workers stay that peer's. The transport already resolved any pane by its rig-scoped name; only the brief forbade it, and the peer paragraph is the operator's explicit exception. rig_peer_invalid refuses a self-peer or a name a session cannot carry. Replies from a busy pane are FILED with `rig reply` and read first by collect, whole, because a screen scrapes to a line budget. [RIG-21, 2026-09-07]",
   "_not_a_spawn_fallback": "the roster contract forbids the BROKER spawning a worker to satisfy a request, because that produces the black-box agent this design exists to prevent. The rig does not weaken that: spawning here is the OPERATOR'S explicit act, in a scenario he named, in his own tmux session, in front of him. Enforced structurally -- no dispatch module can import the rig, and a test walks their imports to prove it.",
   "measured": {
     "date": "2026-08-28",

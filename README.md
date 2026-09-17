@@ -178,6 +178,26 @@ python3 -m nxb rig send --worker "demo CC Worker 1" --task-id <id> --message "..
 python3 -m nxb rig collect --worker "demo CC Worker 1" --task-id <id>
 ```
 
+### Phase 5b — peer rigs (one programme, several fleets)
+
+A rig has one orchestrator. For a programme larger than one fleet, build
+several rigs and name the others as **peers** of a hub rig (the `peers` box in
+Studio's bar, or `--peers a,b` on `rig up`). The hub's orchestrator may then
+dispatch to each peer's ORCHESTRATOR exactly as it dispatches to a worker,
+with `--session <peer>`; a peer's workers stay that peer's. Leave `peers`
+empty on the spokes so they can only answer, or two hubs can wait on each
+other forever. Bring each rig to life separately; a peer that is not standing
+is a mint refusal, and the hub asks you.
+
+Any pane can FILE a long answer instead of relying on its screen:
+
+```sh
+python3 -m nxb rig reply --worker "demo CC Worker 1" --task-id <id> --file report.md
+```
+
+`collect` reads a filed answer first and whole, then falls back to the screen.
+See `docs/PEER-RIGS-nxb-078.md`.
+
 ### Phase 6 — shut down
 
 ```sh

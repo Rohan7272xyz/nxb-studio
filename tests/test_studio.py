@@ -438,6 +438,25 @@ class StudioServed(unittest.TestCase):
             self.assertIn("-m gpt-5.6-sol", cx)
             self.assertIn('model_reasoning_effort="high"', cx)
 
+    def test_bracketed_claude_model_alias_is_quoted_for_the_shell(self):
+        """Claude's official ``opus[1m]`` alias is shell data, not a glob.
+
+        zsh's default ``nomatch`` rejects an unquoted bracket expression
+        before Claude starts. This is the exact command Studio emits, so the
+        launch boundary must preserve the picker value as one literal argv
+        element.
+        """
+        from nxb.rig import launch_command
+        with tempfile.TemporaryDirectory() as tmp:
+            command, _, refusal = launch_command(
+                {"name": "Verifier", "runtime": "claude_code",
+                 "role": "worker", "model": "opus[1m]",
+                 "effort": "xhigh"},
+                ledger=os.path.join(tmp, "l.db"), repo="/r")
+        self.assertIsNone(refusal)
+        self.assertIn("--model 'opus[1m]'", command)
+        self.assertIn("--effort xhigh", command)
+
     def test_agents_with_duplicate_names_are_REFUSED(self):
         """Two panes with one name means a minted id addresses both and the
         worker-side check cannot tell them apart."""
@@ -643,6 +662,29 @@ class StudioServed(unittest.TestCase):
         self.assertIn(b"nxb.studio.widths", body)
         self.assertIn(b"#top{display:flex;align-items:stretch;"
                       b"background:var(--panel);flex-wrap:wrap;", body)
+
+    def test_the_tab_strip_is_its_own_row_and_scrolls(self):
+        """STUDIO-19. Nine rigs in the header row wrapped under the mode
+        switch and the usage cluster, and a nowrap label with no overflow rule
+        painted over its neighbour: the operator could not read which tab he
+        was on. The strip is its own row, never wraps, truncates with an
+        ellipsis, scrolls sideways, and offers a jump menu."""
+        _, body = self._get("/")
+        page = body.decode()
+        self.assertIn('<div id="tabbar">', page)
+        self.assertLess(page.index('</div>\n\n<div id="tabbar">'),
+                        page.index('<div id="bar">'),
+                        "the strip sits between the header and the rig bar")
+        self.assertNotIn('<div id="tabs"></div>\n  <div id="newtab"',
+                         page.split('<div id="tabbar">')[0],
+                         "tabs must no longer share the header row")
+        self.assertIn("#tabs{display:flex;flex:1 1 0;min-width:0;"
+                      "flex-wrap:nowrap;overflow-x:auto;", page)
+        self.assertIn(".tab .lbl{overflow:hidden;text-overflow:ellipsis;", page)
+        self.assertIn('<select id="tabjump"', page)
+        self.assertIn('on.scrollIntoView({block:"nearest", inline:"nearest"})',
+                      page)
+        self.assertIn('addEventListener("wheel"', page)
 
     def test_the_body_is_a_FLEX_ROW_not_a_three_column_grid(self):
         """STUDIO-18. The splitters made #body five children while its CSS was

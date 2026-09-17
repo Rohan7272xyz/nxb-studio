@@ -153,6 +153,18 @@ def _positions(agents):
                              f"{agent['name'] or 'agent'}.y", default_y)
 
 
+def _peers(raw, session, *, strict):
+    """Peer rig names, validated like session names. [RIG-21]"""
+    from nxb.rig import _clean_peers
+    try:
+        peers = _clean_peers(raw)
+    except ValueError as exc:
+        raise DraftError(str(exc)) from exc
+    if strict and session and session in peers:
+        raise DraftError(f"a rig cannot be its own peer: {session!r}")
+    return peers
+
+
 def normalize(spec, *, strict=True):
     """Return the canonical, provider-neutral draft shape.
 
@@ -172,6 +184,7 @@ def normalize(spec, *, strict=True):
     layout = _text(spec.get("layout", "main-horizontal"), "layout")
     if layout not in LAYOUTS:
         raise DraftError(f"unknown layout {layout!r}; choose one of {LAYOUTS}")
+    peers = _peers(spec.get("peers"), session, strict=strict)
     raw_agents = spec.get("agents", [])
     if not isinstance(raw_agents, list):
         raise DraftError("agents must be an array")
@@ -229,7 +242,7 @@ def normalize(spec, *, strict=True):
             for a in agents
         ]
         try:
-            compose_agents(launch_agents, layout=layout)
+            compose_agents(launch_agents, layout=layout, peers=peers)
         except ValueError as exc:
             raise DraftError(str(exc)) from exc
 
@@ -246,7 +259,7 @@ def normalize(spec, *, strict=True):
         canonical_view["zoom"] = float(view["zoom"])
     return {"schema_version": SCHEMA_VERSION, "session": session,
             "working_directory": work_dir, "layout": layout,
-            "agents": agents, "view": canonical_view}
+            "agents": agents, "peers": peers, "view": canonical_view}
 
 
 def validate(spec):

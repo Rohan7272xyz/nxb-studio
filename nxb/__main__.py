@@ -162,10 +162,16 @@ def main(argv=None):
     rg = sub.add_parser("rig", help="stand up a named, enrolled tmux scenario")
     rg.add_argument("action",
                     choices=["up", "down", "show", "clear", "send", "collect",
-                             "workers", "orchestrate", "forget"])
+                             "reply", "workers", "orchestrate", "forget"])
     rg.add_argument("--worker", help="rig send/collect: which worker")
     rg.add_argument("--task-id", help="rig send/collect: a minted nxb task id")
-    rg.add_argument("--message", help="rig send: the directive body")
+    rg.add_argument("--message", help="rig send: the directive body; "
+                                      "rig reply: a short answer")
+    rg.add_argument("--file", default=None,
+                    help="rig reply: a file holding the full answer")
+    rg.add_argument("--peers", default=None,
+                    help="rig up/orchestrate: comma-separated peer rigs whose "
+                         "ORCHESTRATORS this rig's orchestrator may dispatch to")
     rg.add_argument("--scenario", default=None,
                     help="a named scenario; omit and use --workers to compose")
     rg.add_argument("--orchestrator", default=None,
@@ -287,6 +293,27 @@ def main(argv=None):
             # 4 for WAITING, never 0: an answer that has not arrived must not
             # look to a script like an answer that has. Collect again.
             return {"ANSWERED": 0, "WAITING": 4}.get(out["state"], 3)
+        if args.action == "reply":
+            # A worker FILES its answer where collect reads first, so a
+            # report survives its own pane scrolling. [RIG-21]
+            from nxb.keystroke import file_reply
+            missing = [f for f in ("worker", "task_id")
+                       if not getattr(args, f)]
+            if missing:
+                raise SystemExit("rig reply needs --" +
+                                 ", --".join(m.replace("_", "-")
+                                             for m in missing))
+            if bool(args.message) == bool(args.file):
+                raise SystemExit("rig reply needs exactly one of --message "
+                                 "or --file")
+            answer = args.message
+            if args.file:
+                with open(args.file, encoding="utf-8") as handle:
+                    answer = handle.read()
+            out = file_reply(args.worker, args.task_id, answer,
+                             ledger=_ledger_from(args))
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "FILED" else 3
         if args.action == "workers":
             # The live roster, for an ORCHESTRATOR to read. Nothing else
             # printed the fleet: `rig show` prints SCENARIOS (what CAN be
@@ -333,8 +360,14 @@ def main(argv=None):
                 print(json.dumps(refusal, indent=2))
                 return 3
             repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            from nxb.rig import _clean_peers
+            try:
+                peers = _clean_peers(args.peers)
+            except ValueError as exc:
+                raise SystemExit(str(exc))
             send_line(pane["pane"], typed_orchestrator_rule(
-                args.worker, ledger=ledger, repo=repo, session=session))
+                args.worker, ledger=ledger, repo=repo, session=session,
+                peers=peers))
             ok = await_ack(pane["pane"], args.worker, deadline=120.0)
             print(json.dumps({"state": "BRIEFED" if ok else "UNCONFIRMED",
                               "worker": args.worker, "pane": pane["pane"],
@@ -383,7 +416,8 @@ def main(argv=None):
         else:
             plan = args.scenario or "scenario2"
         out = stand_up(plan, session=args.session or "nxb",
-                       work_dir=args.dir, ledger=_ledger_from(args))
+                       work_dir=args.dir, ledger=_ledger_from(args),
+                       peers=args.peers)
         print(json.dumps(out, indent=2))
         return 0 if out["state"] == "READY" else 3
 

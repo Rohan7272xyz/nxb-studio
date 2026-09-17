@@ -51,6 +51,7 @@ MEASURED 2026-08-28, and every one of these changed the design
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -68,6 +69,7 @@ RIG_HOOKS_REVIEW = "rig_hooks_review"
 RIG_NAME_NOT_RESOLVABLE = "rig_name_not_resolvable"
 RIG_ENROLMENT_UNCONFIRMED = "rig_enrolment_unconfirmed"
 RIG_UPDATE_PROMPT = "rig_update_prompt"
+RIG_PEER_INVALID = "rig_peer_invalid"
 
 #: What a READY pane shows. Absence of the marker is failure, never a reason to
 #: proceed hopefully: this is F-14's rule applied to a screen instead of a file.
@@ -172,21 +174,60 @@ def parse_workers(spec):
 #: reasoning effort through `-c`, which is the same key its config.toml uses.
 #: Nothing here is offered in the UI that a runtime cannot actually be told.
 def model_flags(runtime, model=None, effort=None):
+    """Return shell-ready runtime flags with every dynamic value quoted.
+
+    Both launch paths join these fragments into a command that is typed into
+    an interactive shell. Model aliases are therefore shell data: Claude's
+    official ``opus[1m]`` form must not become a zsh glob, and a value restored
+    from an older Studio draft must never become shell syntax.
+    """
     out = []
     if runtime == "claude_code":
         if model:
-            out += ["--model", str(model)]
+            out += ["--model", shlex.quote(str(model))]
         if effort:
-            out += ["--effort", str(effort)]
+            out += ["--effort", shlex.quote(str(effort))]
     elif runtime == "codex":
         if model:
-            out += ["-m", str(model)]
+            out += ["-m", shlex.quote(str(model))]
         if effort:
-            out += ["-c", f'model_reasoning_effort="{effort}"']
+            setting = f'model_reasoning_effort="{effort}"'
+            out += ["-c", shlex.quote(setting)]
     return out
 
 
-def compose_agents(agents, *, layout="main-horizontal"):
+#: Characters a peer rig name cannot carry: the same set a session name
+#: refuses, because a peer IS a session name. [RIG-21]
+_BAD_PEER_CHARS = " \t:.$'\"\\"
+
+
+def _clean_peers(peers):
+    """Peer rig names as a deduplicated list, or ValueError. [RIG-21]
+
+    Accepts a list or a comma-separated string: the CLI flag and the browser
+    bar both speak the latter, the draft speaks the former.
+    """
+    if peers is None:
+        return []
+    if isinstance(peers, str):
+        peers = peers.split(",")
+    if not isinstance(peers, (list, tuple)):
+        raise ValueError("peers must be a list of rig session names")
+    out = []
+    for raw in peers:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        if any(c in name for c in _BAD_PEER_CHARS):
+            raise ValueError(f"peer rig {name!r}: a rig name carries no "
+                             f"spaces, colons, dots, dollar signs, quotes or "
+                             f"backslashes")
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def compose_agents(agents, *, layout="main-horizontal", peers=None):
     """A scenario from EXPLICIT agents, each with its own name and settings.
 
     `compose` builds a fleet from counts, which is the right shape for a
@@ -226,8 +267,12 @@ def compose_agents(agents, *, layout="main-horizontal"):
         panes.append(pane)
     if orchestrators > 1:
         raise ValueError("a rig has at most one orchestrator")
-    return {"description": f"{len(panes)} agents, composed",
+    plan = {"description": f"{len(panes)} agents, composed",
             "layout": layout, "panes": panes}
+    peers = _clean_peers(peers)
+    if peers:
+        plan["peers"] = peers
+    return plan
 
 
 def scoped_name(session, name):
@@ -348,8 +393,20 @@ def _refuse(reason, detail, **extra):
     return out
 
 
+#: Above this many bytes, text goes in as a PASTE rather than as keystrokes.
+#:
+#: MEASURED 2026-09-07 on live Claude Code 2.1.263 panes: a ~1.3 KB operator
+#: message typed with send-keys arrived in two of five panes with only its
+#: last two dozen characters ("Acknowledge in one line."), and a running
+#: orchestrator independently observed the same on a worker pane. Keystroke
+#: delivery of a long burst is lossy at the TUI; a bracketed paste through
+#: tmux's buffer is atomic and is what both runtimes' composers expect for
+#: large input. [RIG-23]
+PASTE_THRESHOLD = 600
+
+
 def send_line(pane, text, *, settle=0.5):
-    """Type a line, then submit it as a SEPARATE keystroke.
+    """Deliver text, then submit it as a SEPARATE keystroke.
 
     MEASURED: sending the text and Enter in one `send-keys` call leaves the
     text sitting un-submitted in Codex's composer. Its slash-command popup
@@ -357,7 +414,35 @@ def send_line(pane, text, *, settle=0.5):
     burst. My hand-run worked only because I happened to pause between the two.
     So the pause is the mechanism, not a politeness, and it is why the rig
     verifies submission rather than assuming it.
+
+    Long text is pasted (bracketed, via a tmux buffer) rather than typed, and
+    the settle grows with its size so Enter arrives after the paste has been
+    consumed. [RIG-23]
     """
+    data = str(text).encode("utf-8")
+    if len(data) > PASTE_THRESHOLD:
+        # Through a FILE and `_tmux`, so tmux stays the only process this
+        # module can start (F-15b) and no stdin plumbing is needed.
+        import tempfile
+        buf = f"nxb-{os.getpid()}-{int(time.time() * 1000)}"
+        with tempfile.NamedTemporaryFile("wb", prefix="nxb-paste-",
+                                         suffix=".txt", delete=False) as handle:
+            handle.write(data)
+            path = handle.name
+        try:
+            loaded = _tmux("load-buffer", "-b", buf, path)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if loaded.returncode == 0:
+            _tmux("paste-buffer", "-p", "-d", "-b", buf, "-t", pane)
+            time.sleep(max(settle, 1.0) + len(data) / 4000.0)
+            _tmux("send-keys", "-t", pane, "Enter")
+            return
+        # A buffer that will not load falls back to typing; better late than
+        # silent, and the old path is the one every earlier rig used.
     _tmux("send-keys", "-t", pane, text)
     time.sleep(settle)
     _tmux("send-keys", "-t", pane, "Enter")
@@ -512,7 +597,8 @@ def await_rename(pane, name, *, deadline=30.0, poll=0.5):
 CODEX_YOLO = "--yolo"
 
 
-def launch_command(spec, *, ledger, repo, sandbox=None, session="nxb"):
+def launch_command(spec, *, ledger, repo, sandbox=None, session="nxb",
+                   peers=None):
     """The shell line for one pane. Returns (command, enrolment_kind, refusal).
 
     `enrolment_kind` is "launch", "typed" or None -- never a boolean. A
@@ -527,7 +613,7 @@ def launch_command(spec, *, ledger, repo, sandbox=None, session="nxb"):
             spec["name"], ledger=ledger, repo=repo,
             role=spec.get("role", "worker"), session=session,
             model=spec.get("model"), effort=spec.get("effort"),
-            instructions=spec.get("instructions"))
+            instructions=spec.get("instructions"), peers=peers)
         return cmd, "launch", refusal
     if spec["runtime"] == "codex":
         # No --append-system-prompt and no --name: named by /rename after
@@ -560,7 +646,7 @@ def await_ack(pane, name, *, deadline=90.0, poll=1.0):
 
 def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
              repo=None, width=240, height=60, ready_deadline=60.0,
-             name_deadline=30.0, enrol_deadline=90.0):
+             name_deadline=30.0, enrol_deadline=90.0, peers=None):
     """Create the scenario. Returns a report; never raises.
 
     Refuses rather than clobbering an existing session: those panes may be
@@ -579,6 +665,16 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
                        f"No scenario {scenario!r}. Known: "
                        f"{', '.join(sorted(SCENARIOS))}. Or compose one with "
                        f"--orchestrator and --workers.")
+    # PEER RIGS are validated before any tmux state changes. [RIG-21]
+    try:
+        peers = _clean_peers(peers if peers is not None
+                             else plan.get("peers"))
+    except ValueError as exc:
+        return _refuse(RIG_PEER_INVALID, str(exc))
+    if session in peers:
+        return _refuse(RIG_PEER_INVALID,
+                       f"rig {session!r} cannot be its own peer.",
+                       remedy=["name only OTHER rigs as peers"])
     work_dir = work_dir or os.getcwd()
     repo = repo or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -633,7 +729,7 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
     for spec, pane in zip(plan["panes"], pane_ids):
         spec = dict(spec, name=scoped_name(session, spec["name"]))
         cmd, enrolment, refusal = launch_command(
-            spec, ledger=ledger, repo=repo, session=session)
+            spec, ledger=ledger, repo=repo, session=session, peers=peers)
         entry = {"name": spec["name"], "runtime": spec["runtime"],
                  "role": spec["role"], "pane": pane,
                  **{k: spec[k] for k in ("model", "effort", "instructions")
@@ -734,7 +830,8 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
             # that mint/send/collect exist. The plumbing was complete and
             # unreachable. [RIG-7]
             rule = (typed_orchestrator_rule(entry["name"], ledger=ledger,
-                                            repo=repo, session=session)
+                                            repo=repo, session=session,
+                                            peers=peers)
                     if entry.get("role") == "orchestrator"
                     else typed_enrolment_rule(entry["name"], ledger=ledger,
                                               repo=repo))
@@ -772,8 +869,22 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
             # can be argued with.
             entry["role_binding"] = "launch"
             continue
+        # A TYPED ROLE READS AS A TASK. MEASURED 2026-09-07 on a 25-pane
+        # programme: all 14 Codex panes began executing their role the moment
+        # it was typed, with no directive and no task id, because a role
+        # phrased "MISSION ... DELIVERABLE ..." arriving as a conversational
+        # message is indistinguishable from an instruction. Claude panes,
+        # whose role is bound in the system prompt, sat idle as designed. So
+        # the typed form says what the enrolment rule already says of itself:
+        # this is not a task. [RIG-22]
         send_line(entry["pane"], f"STANDING ROLE FOR THIS SESSION, from your "
-                                 f"operator: {' '.join(str(text).split())} "
+                                 f"operator -- THIS IS NOT A TASK AND NOT A "
+                                 f"REQUEST TO START: {' '.join(str(text).split())} "
+                                 f"Hold this as your standing responsibility "
+                                 f"and do NOTHING now. Work begins only when a "
+                                 f"marked directive carrying an nxb task id "
+                                 f"arrives; unmarked messages are your operator. "
+                                 f"Reply with one line acknowledging the role. "
                                  f"This applies to every message from now on.")
         entry["role_binding"] = "typed"
 
@@ -811,7 +922,7 @@ def stand_up(scenario="scenario2", *, session="nxb", work_dir=None, ledger,
     _tmux("set-option", "-t", _exact(session), "pane-border-lines", "heavy")
 
     report = {"state": "REFUSED" if problems else "READY",
-              "scenario": scenario, "session": session,
+              "scenario": scenario, "session": session, "peers": peers,
               "attach": f"tmux attach -t {session}",
               "panes": panes,
               **({"problems": [p["name"] for p in problems]} if problems else {})}
@@ -850,6 +961,7 @@ def clear(session="nxb", *, only=None, ledger=None, repo=None,
 
     repo = repo or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     state = load_rig(ledger, session) if ledger else None
+    peers = list((state or {}).get("peers") or [])
     listed = _tmux("list-panes", "-t", _exact(session),
                    "-F", "#{pane_id}")
     panes = listed.stdout.split() if listed.returncode == 0 else []
@@ -877,7 +989,8 @@ def clear(session="nxb", *, only=None, ledger=None, repo=None,
             unprotected.append(entry["name"])
             continue
         rule = (typed_orchestrator_rule(entry["name"], ledger=ledger,
-                                        repo=repo, session=session)
+                                        repo=repo, session=session,
+                                        peers=peers)
                 if entry.get("role") == "orchestrator"
                 else typed_enrolment_rule(entry["name"], ledger=ledger,
                                           repo=repo))
@@ -889,7 +1002,7 @@ def clear(session="nxb", *, only=None, ledger=None, repo=None,
             unprotected.append(entry["name"])
 
     if state is not None and ledger:
-        save_rig(ledger, session, {"session": session,
+        save_rig(ledger, session, {"session": session, "peers": peers,
                                    "panes": list(known.values())})
     out = {"state": "CLEARED", "session": session, "panes": cleared,
            "re_enrolled": re_enrolled}

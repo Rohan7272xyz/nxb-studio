@@ -34,14 +34,30 @@ label{color:var(--faint);font-size:10px;text-transform:uppercase;
    left half of and could not press. */
 #top{display:flex;align-items:stretch;background:var(--panel);flex-wrap:wrap;
   border-bottom:1px solid var(--edge);min-height:44px;flex:0 0 auto}
-#nav,#usebar,#tabs{min-width:0}
-#tabs{flex-wrap:wrap}
+#nav,#usebar{min-width:0}
 #brand{display:flex;align-items:center;padding:0 16px;font-size:10.5px;
   letter-spacing:.2em;color:var(--dim);border-right:1px solid var(--edge)}
-#tabs{display:flex}
-.tab{display:flex;align-items:center;gap:8px;padding:0 15px;cursor:pointer;
+/* THE TAB STRIP IS ITS OWN ROW, AND IT SCROLLS. With nine rigs the tabs
+   shared the header row with the mode switch and the usage cluster: the row
+   wrapped, the tabs squeezed, and a nowrap label with no overflow rule
+   painted over its neighbour, so the operator could not read which tab he
+   was on. Tabs never wrap or overlap now: labels truncate with an ellipsis,
+   the strip scrolls sideways (wheel or trackpad, active tab kept in view),
+   and a jump menu on the right lists every rig by name. [STUDIO-19] */
+#tabbar{display:flex;align-items:stretch;background:var(--panel);
+  border-bottom:1px solid var(--edge);min-height:34px;flex:0 0 auto}
+#tabs{display:flex;flex:1 1 0;min-width:0;flex-wrap:nowrap;overflow-x:auto;
+  overflow-y:hidden;scrollbar-width:thin}
+#tabs::-webkit-scrollbar{height:5px}
+#tabs::-webkit-scrollbar-thumb{background:var(--edge);border-radius:3px}
+.tab{display:flex;align-items:center;gap:8px;padding:0 13px;cursor:pointer;
   border-right:1px solid var(--edge);white-space:nowrap;color:var(--dim);
-  max-width:210px;font-size:12px}
+  flex:0 0 auto;max-width:190px;min-width:0;font-size:12px}
+.tab .lbl{overflow:hidden;text-overflow:ellipsis;min-width:0}
+#tabjump{align-self:center;margin:0 10px;max-width:160px;font-size:11.5px;
+  background:var(--panel2);color:var(--dim);border:1px solid var(--edge);
+  border-radius:6px;padding:3px 6px}
+#tabjump:hover{color:var(--ink)}
 .tab:hover{background:var(--panel2)}
 .tab.on{background:var(--bg);color:var(--ink);
   box-shadow:inset 0 -2px 0 var(--accent)}
@@ -255,8 +271,6 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
 
 <div id="top">
   <div id="brand">NXB STUDIO</div>
-  <div id="tabs"></div>
-  <div id="newtab" title="new rig (⌘T)">+</div>
   <div id="conn"><span class="d"></span><span id="connt">localhost · connected</span></div>
   <div id="nav">
     <div class="nv on" data-v="compose">Compose</div>
@@ -270,9 +284,18 @@ h5{font-size:10px;letter-spacing:.13em;color:var(--faint);
   </div>
 </div>
 
+<div id="tabbar">
+  <div id="tabs"></div>
+  <div id="newtab" title="new rig (⌘T)">+</div>
+  <select id="tabjump" title="jump to a rig"></select>
+</div>
+
 <div id="bar">
   <div class="f"><label>rig</label><input id="session" type="text" size="14"></div>
   <div class="f"><label>dir</label><input id="dir" type="text" size="22"></div>
+  <div class="f"><label>peers</label><input id="peers" type="text" size="18"
+    placeholder="other rigs, comma-separated"
+    title="Peer rigs: this rig's orchestrator may dispatch to each named rig's ORCHESTRATOR, never its workers. Each peer is its own draft and is brought to life on its own."></div>
   <div class="seg" id="viewseg">
     <div class="on" data-m="topology">Topology</div>
     <div data-m="panes" title="coming soon">Pane preview</div>
@@ -402,7 +425,7 @@ function saveView(){ const v = view(); v.zoom = zoom; v.x = panX; v.y = panY;
 
 const newDraftId = () => (crypto.randomUUID ? crypto.randomUUID()
   : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", nodes:[],
+const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", peers:[], nodes:[],
   _draftId:newDraftId(), _revision:0});
 
 /* The file shape is the MCP shape.  Translating at this one seam lets the
@@ -410,7 +433,8 @@ const blank = n => ({name:`rig${n}`, dir:"~", layout:"main-horizontal", nodes:[]
    model learn browser implementation details. */
 function draftSpec(t){
   return {session:t.name, working_directory:t.dir || "~",
-    layout:t.layout || "main-horizontal", view:t.view || {zoom:1,x:0,y:0},
+    layout:t.layout || "main-horizontal", peers:t.peers || [],
+    view:t.view || {zoom:1,x:0,y:0},
     agents:t.nodes.map(n=>{
       const a = {node_id:n.id, name:n.name, role:n.role, runtime:n.runtime,
         x:n.x, y:n.y};
@@ -424,7 +448,8 @@ function draftSpec(t){
 }
 function tabFromDraft(d){
   const t = {name:d.session, dir:d.working_directory || "~",
-    layout:d.layout || "main-horizontal", view:d.view || {zoom:1,x:0,y:0},
+    layout:d.layout || "main-horizontal", peers:d.peers || [],
+    view:d.view || {zoom:1,x:0,y:0},
     nodes:(d.agents||[]).map(a=>({id:a.node_id, name:a.name, role:a.role,
       runtime:a.runtime, model:a.model||"", effort:a.effort||"",
       dir:a.working_directory||"", instructions:a.instructions||"",
@@ -498,7 +523,8 @@ async function persistDraft(t){
   // The untouched placeholder is UI chrome, not a workflow.  Do not make
   // every fresh browser profile publish an empty rig to MCP clients.
   if(!t._revision && !t.nodes.length && /^rig\d+$/.test(t.name)
-      && (t.dir||"~")==="~" && (t.layout||"main-horizontal")==="main-horizontal")
+      && (t.dir||"~")==="~" && (t.layout||"main-horizontal")==="main-horizontal"
+      && !(t.peers||[]).length)
     return;
   const spec = draftSpec(t), signature = JSON.stringify(spec);
   if(t._saving || t._conflict || signature === t._synced) return;
@@ -584,6 +610,7 @@ function drawTabs(){
   tabs.forEach((t,i)=>{
     const d = document.createElement("div");
     d.className = "tab"+(i===active?" on":"")+(standing[t.name]?" live":"");
+    d.title = t.name + (standing[t.name] ? " (standing)" : "");
     d.innerHTML = `<span class="st"></span><span class="lbl">${esc(t.name)}</span>
                    <span class="cl" title="close">×</span>`;
     d.onclick = async e => {
@@ -601,7 +628,27 @@ function drawTabs(){
     tabs.push(blank(tabs.length+1)); active = tabs.length-1; sel = null;
     loadView(); save(); paint();
   };
+  /* The jump menu lists every rig by name, standing ones marked, so a rig
+     that has scrolled out of the strip is still one gesture away. */
+  const jump = $("#tabjump");
+  if(jump){
+    jump.innerHTML = tabs.map((t,i)=>
+      `<option value="${i}"${i===active?" selected":""}>`
+      + `${standing[t.name]?"● ":""}${esc(t.name)}</option>`).join("");
+    jump.onchange = e => {
+      active = +e.target.value; sel = null; loadView(); save(); paint();
+    };
+  }
+  const on = el.querySelector(".tab.on");
+  if(on && on.scrollIntoView) on.scrollIntoView({block:"nearest", inline:"nearest"});
 }
+/* A vertical wheel over the strip scrolls it sideways, so a trackpad or a
+   mouse wheel reaches tabs off the right edge without hunting for the bar. */
+$("#tabs").addEventListener("wheel", e => {
+  const el = e.currentTarget;
+  if(el.scrollWidth <= el.clientWidth) return;
+  if(Math.abs(e.deltaY) > Math.abs(e.deltaX)){ el.scrollLeft += e.deltaY; e.preventDefault(); }
+}, {passive:false});
 
 /* ---- nodes -------------------------------------------------------------- */
 function defaultName(role, runtime){
@@ -637,6 +684,7 @@ function paintCanvas(){
   const t = tab();
   $("#session").value = t.name; $("#dir").value = t.dir;
   $("#layout").value = t.layout;
+  $("#peers").value = (t.peers||[]).join(", ");
   $$("#world .node").forEach(e=>e.remove());
   /* A node is live because the pane it was DEPLOYED AS is running, never
      because its current label happens to match. Renaming a drawn node used to
@@ -897,7 +945,7 @@ const RECOVERY_NAMES = {
   rig_session_exists:"session already exists"
 };
 const launchPayload = t => ({
-  session:t.name, dir:t.dir, layout:t.layout,
+  session:t.name, dir:t.dir, layout:t.layout, peers:t.peers||[],
   agents:t.nodes.map(n=>({name:n.name, role:n.role, runtime:n.runtime,
     model:n.model||null, effort:n.effort||null, dir:n.dir||null,
     instructions:n.instructions||null}))
@@ -1051,7 +1099,8 @@ function openRigInTab(r, {quiet=false} = {}){
       x: isOrch ? Math.round(Math.max(0,kids.length-1)*250/2)+60 : 60+i*250,
       y: isOrch ? 60 : 300};
   });
-  const t = {name:r.session, dir:"~", layout:"main-horizontal", nodes};
+  const t = {name:r.session, dir:"~", layout:"main-horizontal",
+    peers:r.peers||[], nodes};
   if(existing >= 0){ tabs[existing] = t; active = existing; }
   else { tabs.push(t); active = tabs.length-1; }
   sel = null; save(); paint();
@@ -1291,7 +1340,8 @@ function paintUsagePane(){
 function status(){
   const t = tab(), n = t.nodes.length;
   const o = t.nodes.filter(x=>x.role==="orchestrator").length;
-  $("#stL").textContent = `[${t.name}] ${n} pane${n===1?"":"s"} · ${t.layout} · ${t.dir}`;
+  $("#stL").textContent = `[${t.name}] ${n} pane${n===1?"":"s"} · ${t.layout} · ${t.dir}`
+    + ((t.peers||[]).length ? ` · peers: ${t.peers.join(", ")}` : "");
   $("#stM").textContent = `${o} orchestrator · ${n-o} worker${n-o===1?"":"s"}`;
   $("#go").textContent = standing[t.name] ? "Rebuild" : "Bring it to life";
   $("#host").textContent = location.host;
@@ -1388,6 +1438,9 @@ $("#addagent").onclick = () => add("worker","codex");
 /* ---- toolbar ------------------------------------------------------------ */
 $("#session").oninput = e => { tab().name = e.target.value.trim(); save(); paint(); };
 $("#dir").oninput = e => { tab().dir = e.target.value; save(); status(); };
+$("#peers").oninput = e => {
+  tab().peers = e.target.value.split(",").map(s=>s.trim()).filter(Boolean);
+  save(); status(); };
 $("#layout").onchange = e => { tab().layout = e.target.value; save(); status(); };
 $("#autolayout").onclick = () => {
   mark();

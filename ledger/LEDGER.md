@@ -1169,3 +1169,161 @@ not test the author. The new guard asserts the LAYOUT MODE and the CHILD
 ORDER, because those are the facts that were silently wrong.
 
 Suite 412 passed / 743 subtests.
+
+## nxb-073: pickers again, and usage that reads the same way for both runtimes
+
+**STUDIO-19 reverses STUDIO-3, and the reversal is the useful part.** I had
+made model and effort free text after a hardcoded picker offered a model the
+API refused. Rohan: "a drop down means i have to select something." Right --
+typed input means a typo reaches the runtime and fails in a pane minutes
+later. The diagnosis had been correct and the remedy wrong: the problem was
+never that the field was a picker, it was that I wrote its contents from
+memory.
+
+Options now come from the installed binaries themselves -- Claude's alias
+forms and Codex's gpt-5.x ids, extracted from the executables on this machine
+-- with the operator's configured model first, because it is the only one
+proven to work here. A first extraction pass produced `gpt-5.6-terraglobal`
+by running two strings together, which is exactly the "picker full of models
+that do not exist" this was meant to fix; the suffixes are whitelisted now.
+
+VERIFIED WITH NON-DEFAULT PICKS, so a pass could not be the runtime's own
+config doing the work: `--model haiku --effort low` reached the process and
+the pane reported "Haiku 4.5"; `-m gpt-5.6-terra -c
+model_reasoning_effort=high` reached the process and the pane reported
+"gpt-5.6-terra high".
+
+**STUDIO-20 was three things behind one complaint.** The bare "40%" never said
+used or remaining -- it is `used_percent`, so it means SPENT, and both
+runtimes now say so; a usage figure whose direction is unclear is worse than
+none when it is what a fleet gets designed around. The Claude "check" button
+404ed because his server predated the route, the third time today a stale
+server has looked like a broken feature. And the real fix: Claude's reading is
+taken once per server launch on a worker thread, so a number is present when
+the page opens rather than the word "unread" and a button to press.
+
+Also: the rail hint text is gone, and Pane preview says "coming soon" instead
+of logging an error for a button that did not fail.
+
+## nxb-074: drift detection, asked for before it was needed
+
+Rohan, ahead of a release he knows is coming: "how about how we handle when
+new models, updates, etc drop? this is imperative... astra is coming out from
+open ai very soon."
+
+**The honest answer was: it would not.** Verified rather than assumed --
+'astra', 'gpt-6' and 'gpt-5.7-astra' were each tested against both catalog
+patterns and matched none. Both are whitelists of today's naming.
+
+And it is not only models. Counted eight classes of assumption that a runtime
+update can void SILENTLY: model patterns, readiness markers, blocking prompts,
+the rename regex, five launch flags, the /usage wording, the Codex rollout
+shape and the Claude transcript shape. Two of the eight had already broken
+that same afternoon.
+
+`nxb doctor` asks all of them at once and fixes NOTHING on purpose: a drifted
+assumption needs a person to look at what the runtime does now, because code
+that guessed and was confidently wrong is the whole failure being caught.
+
+**DRIFT-2: the detector's own first run was wrong in both directions.** It
+reported DRIFT on a Codex marker that was present (it read the JS launcher
+instead of the native binary) and OK on a Claude marker that was absent (two
+markers listed, one missing, and the logic only failed on all). Grepping a
+binary cannot verify a string the runtime assembles at run time. Markers are
+now verified by BOOTING each runtime in a throwaway pane and reading the
+screen -- this project's own rule, learned when a rename check passed while
+the thing it stood for was broken. The model-name sweep is a WATCH and cannot
+redden a run, because a heuristic that fails the build is a build people stop
+reading.
+
+**And the escape hatch, which matters more than the detector.** Every picker
+now carries `other…`. Without it the picker would be strictly worse than the
+text box it replaced on the one day that matters most: release day.
+
+## STUDIO-21: "counting…" and "reading…" forever, both mine
+
+`read()` kicked a fresh scan on every poll, so `busy` was true whenever it was
+read. And the Claude priming thread was wrapped in a bare `except: pass`, so a
+failure left "reading…" on screen with the reason thrown away -- this
+project's founding defect, written by me, in a file whose docstrings are about
+not hiding failures.
+
+Scans now run at most once every 20 seconds, and a failed reading is stored
+and shown with its reason and a retry.
+
+**Fourth time today a stale server looked like a broken feature**, so the
+studio now compares its start time against its own source mtime and the page
+says "server is running older code — restart it".
+
+Suite 419 passed / 775 subtests.
+
+## nxb-075: the promo fleet, and a token that nearly rode into a public repo
+
+Six rigs and 22 agents with real role names -- Atlas Orchestrator, API
+Builder, Adversarial Auditor, Security Reviewer, Test Runner, Doc Miner -- on
+mixed runtimes and mixed models, displayed fullscreen on a second machine's
+monitor for a promo.
+
+**Two things worth keeping from it.**
+
+**STUDIO-22.** Putting the studio on another machine exposed a real gap, not a
+display problem: Edge there ran a fresh profile, so it opened an EMPTY CANVAS
+beside a Live rigs panel correctly listing four standing fleets. Tabs are
+browser storage; the fleet is on the machine. Any new browser, new profile or
+cleared site data would have shown the same. The studio now adopts standing
+rigs into tabs on first run, once per page and only into a pristine board.
+
+**SECRET-1, a near miss.** `git status` showed an untracked `ledger/studio.token`
+-- a live 32-character bearer token, in the working tree of a repo with a
+PUBLIC remote. Never committed, never pushed, and not even the token in use;
+checked against the full history and against the live public contents. That is
+luck rather than design, in a repo whose shared index has been swept twice
+before. Now gitignored at any depth, along with *.db and rig-*.json.
+
+The residue, stated rather than fixed: a function that writes a secret to a
+path derived from an argument will eventually be handed the wrong argument,
+and the CLI's refusal of relative ledger paths does not protect callers that
+bypass the CLI.
+
+**Restore.** `~/reel/bin/nxb-promo` reads the fleet from a file captured off
+the RUNNING rigs rather than retyped, so a restore is the same fleet and not a
+similar one. Proven against a real reboot: everything gone as predicted, back
+in about 30 seconds, every rig READY first try. It skips a rig that is already
+standing, because rebuilding one destroys its context, and it checks whether a
+running server predates the repo before reusing it.
+
+## nxb-076: eleven agents under one orchestrator, and the ceiling that hid until asked
+
+Rohan asked for one orchestrator controlling ten agents. It failed at five.
+
+**RIG-21.** Every `split-window` halves the pane it lands in, and the layout
+was applied once at the END, so the window ran out of room and tmux refused
+with "no space for a new pane". MEASURED with plain tmux on a 240x60 window,
+no runtimes and nothing spent: 5 panes without a layout between splits, 15
+with. The rig had an undocumented ceiling of about six agents, and every fleet
+built until today happened to sit under it. Redistributing after every split
+fixes it; the refusal now also says which pane it died on, out of how many.
+
+**RIG-22.** Claude titles its pane with the worker name and Codex titles it
+with the cwd, so half a mixed fleet's borders read "rohan". The rig knows
+every name, so it now writes it to a tmux USER OPTION, which a runtime cannot
+overwrite -- unlike the pane title the two vendors are competing over. Each
+agent also gets its own border colour. Colouring by RUNTIME was the obvious
+move and is wrong: a mixed fleet then has two colours, and eleven panes in two
+colours read as one block.
+
+**A discipline note, because it nearly cost the operator his own windows.**
+Placing the tmux view on a specific monitor meant driving macOS accessibility,
+and three separate identification strategies picked HIS windows instead of
+mine: "front window" resolved to his editor, a case-insensitive title match on
+"nexus" hit his session named "Orchestrator 3 - NEXUS_rebuild", and a
+size-and-position heuristic moved an unrelated window to the Dell. Nothing was
+destroyed, and one keystroke check confirmed no stray text reached any agent
+pane, but the near-miss rate was three in ten minutes. What finally worked was
+refusing to act until the frontmost window was VERIFIED to be mine, and the
+lesson is the project's own: identify the thing you are about to change, then
+change it -- never the other way round.
+
+Also, twice in one session, `select-layout -t "=nexus"` failed with "can't
+find pane" -- the exact window-vs-session target distinction filed as RIG-13
+and fixed in the code, repeated by hand at the shell.

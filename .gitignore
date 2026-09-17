@@ -3,3 +3,12 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 evidence/
+.nxb/
+
+# Secrets that land beside a ledger. `stored_token` writes next to
+# whatever --ledger it is handed, so a relative path drops a live
+# token into the tree. Never committed, and now it cannot be.
+studio.token
+**/studio.token
+*.db
+rig-*.json

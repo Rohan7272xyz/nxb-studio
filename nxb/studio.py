@@ -284,7 +284,13 @@ class Studio:
             "codex": {
                 "models": _ordered(catalog["codex"] or codex,
                                    cfg["codex"].get("model")),
-                "efforts": ["low", "medium", "high", "xhigh"]},
+                # MEASURED 2026-09-07 on codex-cli 0.153.4: `codex exec -m
+                # gpt-6-astra -c model_reasoning_effort="max"` answered, and
+                # the binary's effort enum reads minimal/low/medium/high/
+                # xhigh/max/ultra. `ultra` is nested delegation (hidden
+                # subagents) rather than a single-agent effort, so it stays
+                # out of a picker that composes a VISIBLE fleet.
+                "efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
 
     def state(self):
@@ -331,6 +337,7 @@ class Studio:
                             item["trust_scope"] = scope
                 panes.append(item)
             rigs.append({"session": session, "standing": standing,
+                         "peers": list(record.get("peers") or []),
                          "panes": panes})
         return {"rigs": rigs, "ledger": self.ledger,
                 "managed": self.managed,
@@ -353,7 +360,8 @@ class Studio:
             # The composed form: every node is an individual the operator
             # named and configured. The count form below stays for the CLI
             # and for anything that only cares how many.
-            plan = compose_agents(body["agents"], layout=layout)
+            plan = compose_agents(body["agents"], layout=layout,
+                                  peers=body.get("peers"))
         else:
             workers = [(w["runtime"], int(w["count"]))
                        for w in body.get("workers", [])
@@ -363,6 +371,10 @@ class Studio:
             plan = compose(workers,
                            orchestrator=body.get("orchestrator") or None,
                            layout=layout)
+            from nxb.rig import _clean_peers
+            peers = _clean_peers(body.get("peers"))
+            if peers:
+                plan["peers"] = peers
         return session, work_dir, plan
 
     def up(self, body):
