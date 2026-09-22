@@ -147,6 +147,74 @@ def session_registry_names(registry_dir=None):
     return lookup
 
 
+def session_registry_ids(registry_dir=None):
+    """Map declared name -> sessionId, from the session registry. [nxb-079]
+
+    The same `<pid>.json` records that name a session also carry its
+    `sessionId`, which is the address `claude --resume` takes. A session id
+    ROTATES on /clear (docs/RUNTIME-CLAUDE-CODE.md), so this is read on demand
+    and never cached. Reads ONLY `*.json`, never the `.key` files beside them,
+    and spawns nothing: the rig module is proven to start only tmux.
+    """
+    import glob
+
+    directory = os.path.expanduser(registry_dir or SESSION_REGISTRY)
+    mapping = {}
+    for path in glob.glob(os.path.join(directory, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        name, session_id = record.get("name"), record.get("sessionId")
+        if not name or not session_id:
+            continue
+        if record.get("nameSource") in UNDECLARED_NAME_SOURCES:
+            continue
+        mapping[name] = session_id
+    return mapping
+
+
+def session_registry_panes(registry_dir=None):
+    """Map tmux pane id -> sessionId, from the session registry. [nxb-082.4]
+
+    EXACTER THAN THE NAME. `session_registry_ids` keys on the declared name,
+    which is what the rig asked the pane to be called; a pane that has not
+    finished renaming, or two rigs whose workers share a name, both resolve
+    to the wrong session or to none. Every Claude Code record written from
+    inside tmux also carries `"tmux": "<session>:@<window>.%<pane>"`, and the
+    pane id is the one address a rig never guesses. Reads the same `*.json`
+    records and spawns nothing.
+    """
+    import glob
+
+    directory = os.path.expanduser(registry_dir or SESSION_REGISTRY)
+    mapping = {}
+    for path in glob.glob(os.path.join(directory, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        address, session_id = record.get("tmux"), record.get("sessionId")
+        if not address or not session_id or "." not in str(address):
+            continue
+        pane = str(address).rsplit(".", 1)[-1]
+        if not pane.startswith("%"):
+            continue
+        # A PANE OUTLIVES THE PROCESSES IN IT. `rig relaunch` replaces one
+        # pane's runtime and leaves the dead session's record behind, so two
+        # records can claim the same pane id; the newest one is the live one.
+        started = record.get("startedAt") or 0
+        if pane not in mapping or started >= mapping[pane][1]:
+            mapping[pane] = (session_id, started)
+    return {pane: value for pane, (value, _) in mapping.items()}
+
+
 def discover(*, socket_dir=None, name_source=None, prober=probe_alive):
     """Return a Roster of LIVE panes. Stale sockets are dropped, not listed.
 

@@ -144,8 +144,10 @@ class TheStandingRigIsDiscoveredNeverAssumed(unittest.TestCase):
                             self._tmux_answering({"nxb-s2"})), \
                  mock.patch("nxb.rig.send_line",
                             lambda pane, text: typed.append((pane, text))):
+                # fresh=False: this test is about RESOLUTION; the per-task
+                # context reset has its own tests in test_context_budget.
                 out = send_directive("CX Worker 1", "nxbt-1", "body",
-                                     ledger=ledger)
+                                     ledger=ledger, fresh=False)
         self.assertEqual(out["state"], "TYPED")
         self.assertEqual(out["session"], "nxb-s2")
         self.assertEqual(typed[0][0], "%3")
@@ -155,8 +157,10 @@ class TheStandingRigIsDiscoveredNeverAssumed(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = self._rig_state(tmp, ["nxb-s2"])
             with mock.patch("nxb.rig._tmux", self._tmux_answering(set())):
+                # fresh=False: this test is about RESOLUTION; the per-task
+                # context reset has its own tests in test_context_budget.
                 out = send_directive("CX Worker 1", "nxbt-1", "body",
-                                     ledger=ledger)
+                                     ledger=ledger, fresh=False)
         self.assertEqual(out["reason"], "keystroke_no_rig")
         self.assertIn("nxb-s2", out["detail"],
                       "the refusal must say state EXISTS for the fallen rig, "
@@ -168,8 +172,10 @@ class TheStandingRigIsDiscoveredNeverAssumed(unittest.TestCase):
             ledger = self._rig_state(tmp, ["a", "b"])
             with mock.patch("nxb.rig._tmux",
                             self._tmux_answering({"a", "b"})):
+                # fresh=False: this test is about RESOLUTION; the per-task
+                # context reset has its own tests in test_context_budget.
                 out = send_directive("CX Worker 1", "nxbt-1", "body",
-                                     ledger=ledger)
+                                     ledger=ledger, fresh=False)
         self.assertEqual(out["reason"], "keystroke_ambiguous_rig")
         self.assertEqual(out["remedy"], ["--session a", "--session b"],
                          "the remedy is the exact flag, per rig, not advice")
@@ -193,8 +199,10 @@ class TheStandingRigIsDiscoveredNeverAssumed(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = os.path.join(tmp, "ledger.db")
             with mock.patch("nxb.rig._tmux", self._tmux_answering(set())):
+                # fresh=False: this test is about RESOLUTION; the per-task
+                # context reset has its own tests in test_context_budget.
                 out = send_directive("CX Worker 1", "nxbt-1", "body",
-                                     ledger=ledger)
+                                     ledger=ledger, fresh=False)
         self.assertEqual(out["reason"], "keystroke_no_rig")
         self.assertTrue(any("rig up" in r for r in out["remedy"]))
 

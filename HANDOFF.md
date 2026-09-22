@@ -2225,3 +2225,51 @@ Three things this confirms rather than teaches:
   guard proven by a probe that could not fail is not proven.
 - A collector that reports a false green is strictly worse than no collector,
   because it converts "nobody checked" into "something checked and it passed".
+
+## COST IS REQUESTS TIMES CONTEXT, AND THE BRIEF WAS THE BIGGEST COST
+
+nxb-079, 2026-09-12, measured on the 48-hour Pact programme. Full numbers in
+`docs/CONTEXT-BUDGET-nxb-079.md`; the ones that matter:
+
+- 11,779 Codex requests, 1.48 BILLION input tokens, 97 percent cached. Every
+  request re-sends the pane's whole context.
+- **68 orchestrator turns that polled `rig collect` in a loop were 633M of
+  those tokens: 43 percent of everything the fleet spent.** The brief said
+  "wait a few seconds and collect again", and a compliant orchestrator did.
+- Claude reviewer panes on the 1M models ran to 930K of context and re-read
+  it on every request: 0.95 billion cache-read tokens across 20 panes
+  (first written as 2.16 billion: a Claude transcript carries one usage
+  record per content block, and the first count summed them all).
+- Two host restarts rebuilt 25 panes from nothing and re-dispatched work
+  whose ids were still open; fresh workers redid it.
+
+**This corrects the peer-rig section above** ("the hub polls a peer every few
+minutes") and the brief that section describes: `collect` and `await` now
+wait INSIDE the command (`--wait`), `rig dispatch` mints and types in one
+command, a WAITING payload is eight lines, a dispatch starts the worker on a
+fresh context (`--keep-context` for a revision only), every pane launches
+with a context ceiling, `mint` refuses a second id for a busy worker, and a
+downed rig is RESUMED on its recorded conversation ids (`rig resume`), never
+rebuilt by default. None of it touches model selection.
+
+The generalisable lesson: **a rule about cost belongs in the mechanism the
+model runs, not in the prose it reads.** "Collect every few minutes" was
+prose; `--wait 600` is a mechanism. When you find an agent spending, look
+first at what its brief told it to do in a loop.
+
+
+**nxb-082.3, 2026-09-12 late.** The second live run (pact-dev, Fable lead,
+two Opus builders, two small page changes) had its work done inside an hour
+and then lost an hour to the checkpoint pass: re-asking a pane that had
+already confirmed, waiting on panes in series, dropping a note that
+confirmed late, refusing a note 700 characters over, erasing its own stamp,
+and a `/clear` that would have submitted the operator's unsent draft. All
+six are fixed and measured in `docs/CHECKPOINTS-nxb-082.md` (RIG-36), with
+the supersede guard (RIG-35) and the Codex ready marker that a 22-column
+pane truncated (ht-android-v2, 28 refusals). The lesson repeats the last
+one: every one of these was the mechanism, not the model, and each was
+found by reading the pane's own transcript against the watcher's log.
+
+**Latest handoff:** `docs/HANDOFF-2026-09-13-nxb-082.3.md` (the night the
+harness was refined on two live rigs; state, commits, measured facts, open
+items, operating rules). Start there.

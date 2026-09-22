@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="640" viewBox="0 0 1040 640" role="img" aria-label="Sequence of one task. The operator asks the orchestrator. The orchestrator runs rig dispatch, which mints a task id after a roster check, clears the worker pane and types a marked directive. The worker validates the id against the ledger. The orchestrator runs rig collect with a wait, blocking inside one command. The worker does the work and files its reply. nxb reads the filed reply and returns a summary plus a vault path. The orchestrator reports agreement or disagreement to the operator.">
+  <style>
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+.t{font-size:14px;font-weight:600;}
+.s{font-size:11.5px;fill:#586472;}
+.sm{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;}
+.hdr{font-size:11px;font-weight:600;letter-spacing:.12em;fill:#586472;}
+.lbl{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;paint-order:stroke;stroke:#FFFFFF;stroke-width:5px;stroke-linejoin:round;}
+.lbl.g{fill:#6F3AA8;font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:600;font-size:12px;}
+.lbl.w{fill:#A0561A;}
+.box{fill:#FFFFFF;stroke:#CBD3DC;stroke-width:1.5;}
+.op{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1.5;}
+.cc{fill:#F8E9E1;stroke:#B4552C;stroke-width:1.5;}
+.cx{fill:#E0EFF5;stroke:#1C6A88;stroke-width:1.5;}
+.store{fill:#E4E9EE;stroke:#CBD3DC;stroke-width:1.2;}
+.band{fill:none;stroke:#CBD3DC;stroke-width:1.2;}
+.tmux{fill:none;stroke:#586472;stroke-width:1.2;stroke-dasharray:5 4;}
+.warnbox{fill:#FBF0E4;stroke:#A0561A;stroke-width:1.2;}
+.ln{fill:none;stroke:#586472;stroke-width:1.4;}
+.ln.g{stroke:#6F3AA8;stroke-width:2.2;}
+.ln.d{stroke-dasharray:5 4;}
+.ln.w{stroke:#A0561A;stroke-dasharray:4 3;}
+.life{stroke:#CBD3DC;stroke-width:1.2;stroke-dasharray:3 4;}
+.act{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1;}
+.ah{fill:#586472;}
+.ah.g{fill:#6F3AA8;}
+.ah.w{fill:#A0561A;}
+.tc{fill:#B4552C;} .tx{fill:#1C6A88;} .tg{fill:#6F3AA8;} .tw{fill:#A0561A;}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+</style>
+  <defs>
+    <marker id="f2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1040" height="640" rx="8" fill="#FFFFFF"/>
+  <!-- heads -->
+  <rect x="10" y="20" width="140" height="44" rx="5" class="op"/>
+  <text x="80" y="47" text-anchor="middle" class="t tg">Operator</text>
+  <rect x="215" y="20" width="150" height="44" rx="5" class="box"/>
+  <text x="290" y="47" text-anchor="middle" class="t">Orchestrator pane</text>
+  <rect x="435" y="20" width="150" height="44" rx="5" class="box"/>
+  <text x="510" y="40" text-anchor="middle" class="t">nxb</text>
+  <text x="510" y="56" text-anchor="middle" class="s">CLI + ledger.db</text>
+  <rect x="655" y="20" width="150" height="44" rx="5" class="cc"/>
+  <text x="730" y="40" text-anchor="middle" class="t tc">Worker pane</text>
+  <text x="730" y="56" text-anchor="middle" class="s">either runtime</text>
+  <rect x="865" y="20" width="150" height="44" rx="5" class="store"/>
+  <text x="940" y="40" text-anchor="middle" class="t">replies/ + vault</text>
+  <text x="940" y="56" text-anchor="middle" class="s">on disk</text>
+
+  <line x1="80" y1="64" x2="80" y2="625" class="life"/>
+  <line x1="290" y1="64" x2="290" y2="625" class="life"/>
+  <line x1="510" y1="64" x2="510" y2="625" class="life"/>
+  <line x1="730" y1="64" x2="730" y2="625" class="life"/>
+  <line x1="940" y1="64" x2="940" y2="625" class="life"/>
+
+  <!-- collect wait activation -->
+  <rect x="284" y="372" width="12" height="172" class="act"/>
+  <rect x="504" y="372" width="12" height="172" class="act"/>
+  <text x="274" y="452" text-anchor="end" class="s">waits inside</text>
+  <text x="274" y="467" text-anchor="end" class="s">one command,</text>
+  <text x="274" y="482" text-anchor="end" class="s">not a polling loop</text>
+
+  <!-- messages -->
+  <line x1="80" y1="110" x2="287" y2="110" class="ln" marker-end="url(#f2a)"/>
+  <text x="185" y="102" text-anchor="middle" class="lbl">plain request, unmarked</text>
+
+  <line x1="290" y1="160" x2="507" y2="160" class="ln" marker-end="url(#f2a)"/>
+  <text x="400" y="152" text-anchor="middle" class="lbl">rig dispatch --message-file</text>
+
+  <rect x="520" y="184" width="196" height="30" rx="4" class="box"/>
+  <text x="618" y="203" text-anchor="middle" class="s">mint: roster check, id for one worker</text>
+
+  <line x1="510" y1="250" x2="727" y2="250" class="ln" marker-end="url(#f2a)"/>
+  <text x="620" y="242" text-anchor="middle" class="lbl">/clear, then marked directive</text>
+
+  <line x1="730" y1="292" x2="513" y2="292" class="ln" marker-end="url(#f2a)"/>
+  <text x="620" y="284" text-anchor="middle" class="lbl">nxb validate &lt;task_id&gt;</text>
+
+  <line x1="510" y1="330" x2="727" y2="330" class="ln d" marker-end="url(#f2a)"/>
+  <text x="620" y="322" text-anchor="middle" class="lbl">task_valid · else it refuses</text>
+
+  <line x1="296" y1="376" x2="501" y2="376" class="ln" marker-end="url(#f2a)"/>
+  <text x="400" y="368" text-anchor="middle" class="lbl">rig collect --wait 600</text>
+
+  <rect x="740" y="396" width="182" height="30" rx="4" class="cc"/>
+  <text x="831" y="415" text-anchor="middle" class="s">does the work, SUMMARY first</text>
+
+  <line x1="730" y1="460" x2="937" y2="460" class="ln" marker-end="url(#f2a)"/>
+  <text x="835" y="452" text-anchor="middle" class="lbl">rig reply --file report.md</text>
+
+  <line x1="516" y1="500" x2="937" y2="500" class="ln d" marker-end="url(#f2a)"/>
+  <text x="620" y="492" text-anchor="middle" class="lbl">reads replies/&lt;id&gt;</text>
+  <text x="835" y="492" text-anchor="middle" class="lbl">pane screen = fallback</text>
+
+  <line x1="504" y1="540" x2="299" y2="540" class="ln d" marker-end="url(#f2a)"/>
+  <text x="400" y="532" text-anchor="middle" class="lbl">SUMMARY + vault path</text>
+
+  <line x1="290" y1="590" x2="83" y2="590" class="ln" marker-end="url(#f2a)"/>
+  <text x="185" y="582" text-anchor="middle" class="lbl">agree or disagree, and why</text>
+</svg>

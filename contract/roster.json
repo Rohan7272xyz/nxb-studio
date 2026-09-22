@@ -10,7 +10,9 @@
     "task_wrong_worker",
     "task_revoked",
     "runtime_cannot_enroll",
-    "roster_ambiguous_worker"
+    "roster_ambiguous_worker",
+    "task_worker_busy",
+    "task_worker_active"
   ],
   "schemas": {
     "roster_refusal": {

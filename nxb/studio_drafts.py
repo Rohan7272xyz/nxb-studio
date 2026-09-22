@@ -219,10 +219,21 @@ def normalize(spec, *, strict=True):
         for public, field in (("model", "model"), ("effort", "effort"),
                               ("working_directory", "working_directory"),
                               ("instructions", "instructions"),
+                              ("tools", "tools"),
                               ("deployed_name", "deployed_name")):
             value = _text(raw.get(public), f"agents[{i}].{public}")
             if value:
                 agent[field] = value
+        # The context ceiling, in tokens. 0 disables it; absent means the
+        # runtime default in nxb/rig.py. Validated by the launcher's own
+        # rule so a draft cannot carry a value the runtime would refuse.
+        limit = raw.get("context_limit")
+        if limit is not None and limit != "":
+            from nxb.rig import clean_context_limit
+            try:
+                agent["context_limit"] = clean_context_limit(limit, runtime)
+            except ValueError as exc:
+                raise DraftError(f"agents[{i}].context_limit: {exc}") from exc
         if "x" in raw:
             agent["x"] = raw["x"]
         if "y" in raw:
@@ -238,7 +249,9 @@ def normalize(spec, *, strict=True):
             {"name": a["name"], "role": a["role"], "runtime": a["runtime"],
              "model": a.get("model"), "effort": a.get("effort"),
              "dir": a.get("working_directory"),
-             "instructions": a.get("instructions")}
+             "instructions": a.get("instructions"),
+             "context_limit": a.get("context_limit"),
+             "tools": a.get("tools")}
             for a in agents
         ]
         try:

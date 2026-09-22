@@ -162,13 +162,61 @@ def main(argv=None):
     rg = sub.add_parser("rig", help="stand up a named, enrolled tmux scenario")
     rg.add_argument("action",
                     choices=["up", "down", "show", "clear", "send", "collect",
-                             "reply", "workers", "orchestrate", "forget"])
+                             "reply", "workers", "orchestrate", "forget",
+                             "dispatch", "await", "resume", "reset", "nudge",
+                             "relaunch",
+                             "health", "checkpoint", "watch", "usage"])
     rg.add_argument("--worker", help="rig send/collect: which worker")
-    rg.add_argument("--task-id", help="rig send/collect: a minted nxb task id")
-    rg.add_argument("--message", help="rig send: the directive body; "
-                                      "rig reply: a short answer")
+    rg.add_argument("--task-id", action="append", dest="task_ids",
+                    help="rig send/collect: a minted nxb task id "
+                         "(rig await: repeatable)")
+    rg.add_argument("--message", help="rig send/dispatch: the directive body; "
+                                      "rig reply: a short answer; "
+                                      "rig nudge: the note")
+    rg.add_argument("--message-file", default=None,
+                    help="rig send/dispatch: a file holding the directive, "
+                         "so a long one never rides on a command line")
     rg.add_argument("--file", default=None,
                     help="rig reply: a file holding the full answer")
+    # nxb-079: the context budget.
+    rg.add_argument("--wait", type=float, default=0.0,
+                    help="rig collect/await: seconds to wait INSIDE the "
+                         "command for an answer (one round-trip instead of "
+                         "a polling loop)")
+    rg.add_argument("--tail", type=int, default=None,
+                    help="rig collect: lines of pane tail in a WAITING reply "
+                         "(default 8)")
+    rg.add_argument("--keep-context", action="store_true",
+                    help="rig send/dispatch: do NOT reset the worker's "
+                         "context first (for a revision of its last task)")
+    rg.add_argument("--supersede", default=None,
+                    help="rig dispatch: revoke this outstanding task id "
+                         "(or 'all') for the worker before minting")
+    rg.add_argument("--continue", dest="continue_notes", action="store_true",
+                    help="rig resume: tell every resumed pane that holds an "
+                         "outstanding task to continue it")
+    rg.add_argument("--reaffirm", action="store_true",
+                    help="rig resume: re-type the rule into resumed Codex "
+                         "panes (one turn each)")
+    rg.add_argument("--min-interval", type=int, default=3600,
+                    help="rig nudge: seconds between nudges to one pane")
+    rg.add_argument("--context-limit", default=None,
+                    help="rig relaunch: the pane's new context ceiling in "
+                         "tokens, written to the record before the launch")
+    rg.add_argument("--effort", default=None,
+                    help="rig relaunch: the pane's new effort")
+    rg.add_argument("--force", action="store_true",
+                    help="rig nudge: ignore the interval and the no-task check")
+    rg.add_argument("--full", action="store_true",
+                    help="rig collect: return a long answer whole instead of "
+                         "its summary and path")
+    rg.add_argument("--threshold", type=float, default=None,
+                    help="rig checkpoint/watch: context fraction that "
+                         "triggers a checkpoint (default 0.8)")
+    rg.add_argument("--interval", type=int, default=60,
+                    help="rig watch: seconds between passes")
+    rg.add_argument("--once", action="store_true",
+                    help="rig watch: one pass, then exit")
     rg.add_argument("--peers", default=None,
                     help="rig up/orchestrate: comma-separated peer rigs whose "
                          "ORCHESTRATORS this rig's orchestrator may dispatch to")
@@ -196,6 +244,12 @@ def main(argv=None):
     mi.add_argument("--session", default=None,
                     help="count only this rig session's workers (default: "
                          "every rig recorded next to the ledger)")
+    mi.add_argument("--supersede", default=None,
+                    help="revoke this outstanding id (or 'all') for the "
+                         "worker first; without it a busy worker is refused")
+    mi.add_argument("--force", action="store_true",
+                    help="supersede even a worker whose transcript moved in "
+                         "the last five minutes")
 
     dr = sub.add_parser(
         "doctor", help="check every assumption nxb makes about the runtimes")
@@ -220,6 +274,61 @@ def main(argv=None):
     st.add_argument("--fresh-token", action="store_true",
                     help="rotate the stored studio token")
     st.add_argument("--ledger", default=None,
+                    help="absolute path; or set NXB_LEDGER")
+
+    cx = sub.add_parser(
+        "context", help="the context store: state notes, reports, search "
+                        "[nxb-081]")
+    cx.add_argument("action", choices=["state", "get", "put", "patch",
+                                       "search", "list", "index", "log",
+                                       "path", "map", "checkpoint",
+                                       "relocate"])
+    cx.add_argument("--section", default=None,
+                    help="patch: the heading whose section to replace")
+    cx.add_argument("--append", action="store_true",
+                    help="patch: append to the section instead of replacing")
+    cx.add_argument("--dir", default=None, help="map: the project directory")
+    cx.add_argument("--worker", default=None, help="checkpoint: which pane")
+    cx.add_argument("--to", default=None, help="relocate: the new vault folder")
+    cx.add_argument("--session", help="state/log: which rig")
+    cx.add_argument("--key", help="get/put: the note key, e.g. notes/decisions")
+    cx.add_argument("--file", default=None, help="put: the note body file")
+    cx.add_argument("--body", default=None, help="put: the note body inline")
+    cx.add_argument("--summary", default=None, help="put: a one-line summary")
+    cx.add_argument("--tags", default=None, help="put: comma-separated tags")
+    cx.add_argument("--author", default=None, help="put: who wrote it")
+    cx.add_argument("--query", help="search: the terms")
+    cx.add_argument("--prefix", default="", help="search/list: key prefix")
+    cx.add_argument("--limit", type=int, default=None)
+    cx.add_argument("--max-chars", type=int, default=None,
+                    help="get: how much of the body to return (bounded)")
+    cx.add_argument("--offset", type=int, default=0, help="get: read on from")
+    cx.add_argument("--line", default=None, help="log: the line to append")
+    cx.add_argument("--ledger", default=None,
+                    help="absolute path; or set NXB_LEDGER")
+
+    br = sub.add_parser(
+        "bridge", help="two agents talk through nxb with no rig [nxb-080]")
+    br.add_argument("action", choices=["join", "peers", "send", "inbox",
+                                       "history", "leave"])
+    br.add_argument("--name", help="join/inbox/leave: your bridge name")
+    br.add_argument("--from", dest="sender", help="send: your bridge name")
+    br.add_argument("--to", help="send: the recipient's bridge name")
+    br.add_argument("--message", help="send: the text")
+    br.add_argument("--message-file", default=None,
+                    help="send: a file holding the text")
+    br.add_argument("--reply-to", type=int, default=None,
+                    help="send: the id of the message this answers")
+    br.add_argument("--wait", type=float, default=0.0,
+                    help="inbox: seconds to wait inside the command")
+    br.add_argument("--no-mark-read", action="store_true",
+                    help="inbox: leave the messages unread")
+    br.add_argument("--limit", type=int, default=50)
+    br.add_argument("--a", help="history: one name")
+    br.add_argument("--b", help="history: the other name")
+    br.add_argument("--runtime", default=None, help="join: what you are")
+    br.add_argument("--note", default=None, help="join: a one-line note")
+    br.add_argument("--ledger", default=None,
                     help="absolute path; or set NXB_LEDGER")
 
     rv = sub.add_parser(
@@ -262,24 +371,48 @@ def main(argv=None):
 
     if args.cmd == "rig":
         from nxb.rig import SCENARIOS, clear, stand_up, tear_down
+        task_ids = getattr(args, "task_ids", None) or []
+        args.task_id = task_ids[0] if task_ids else None
+
+        def _body():
+            """The directive text: --message, or --message-file, never both."""
+            if bool(args.message) == bool(args.message_file):
+                raise SystemExit(f"rig {args.action} needs exactly one of "
+                                 f"--message or --message-file")
+            if args.message_file:
+                with open(args.message_file, encoding="utf-8") as handle:
+                    return handle.read()
+            return args.message
+
         if args.action == "show":
             print(json.dumps(SCENARIOS, indent=2))
             return 0
         if args.action == "send":
             from nxb.keystroke import send_directive
-            missing = [f for f in ("worker", "task_id", "message")
+            missing = [f for f in ("worker", "task_id")
                        if not getattr(args, f)]
             if missing:
                 raise SystemExit("rig send needs --" +
                                  ", --".join(m.replace("_", "-")
                                              for m in missing))
-            out = send_directive(args.worker, args.task_id, args.message,
+            out = send_directive(args.worker, args.task_id, _body(),
                                  ledger=_ledger_from(args),
-                                 session=args.session)
+                                 session=args.session,
+                                 fresh=not args.keep_context)
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "TYPED" else 3
+        if args.action == "dispatch":
+            # mint + send in ONE command: one model round-trip, not two.
+            from nxb.keystroke import dispatch
+            if not args.worker:
+                raise SystemExit("rig dispatch needs --worker")
+            out = dispatch(args.worker, _body(), ledger=_ledger_from(args),
+                           session=args.session, fresh=not args.keep_context,
+                           supersede=args.supersede, force=args.force)
             print(json.dumps(out, indent=2))
             return 0 if out["state"] == "TYPED" else 3
         if args.action == "collect":
-            from nxb.keystroke import collect_reply
+            from nxb.keystroke import WAITING_TAIL_LINES, collect_reply
             missing = [f for f in ("worker", "task_id")
                        if not getattr(args, f)]
             if missing:
@@ -288,11 +421,94 @@ def main(argv=None):
                                              for m in missing))
             out = collect_reply(args.worker, args.task_id,
                                 ledger=_ledger_from(args),
-                                session=args.session)
+                                session=args.session, wait=args.wait,
+                                tail_lines=args.tail or WAITING_TAIL_LINES,
+                                full=args.full)
             print(json.dumps(out, indent=2))
             # 4 for WAITING, never 0: an answer that has not arrived must not
             # look to a script like an answer that has. Collect again.
             return {"ANSWERED": 0, "WAITING": 4}.get(out["state"], 3)
+        if args.action == "await":
+            from nxb.keystroke import await_any
+            if not task_ids:
+                raise SystemExit("rig await needs one or more --task-id")
+            out = await_any(task_ids, ledger=_ledger_from(args),
+                            wait=args.wait, session=args.session)
+            print(json.dumps(out, indent=2))
+            return {"ANSWERED": 0, "WAITING": 4}.get(out["state"], 3)
+        if args.action == "resume":
+            from nxb.rig import resume
+            if not args.session:
+                raise SystemExit("rig resume needs --session <rig>")
+            out = resume(args.session, ledger=_ledger_from(args),
+                         work_dir=args.dir, reaffirm=args.reaffirm,
+                         continue_notes=args.continue_notes)
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "RESUMED" else 3
+        if args.action == "reset":
+            from nxb.keystroke import _resolve
+            from nxb.rig import reset_pane
+            if not args.worker:
+                raise SystemExit("rig reset needs --worker")
+            ledger = _ledger_from(args)
+            pane, session, refusal = _resolve(args.worker, ledger,
+                                              args.session)
+            if refusal is not None:
+                print(json.dumps(refusal, indent=2))
+                return 3
+            out = reset_pane(pane, session=session, ledger=ledger)
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "RESET" else 3
+        if args.action == "nudge":
+            from nxb.rig import nudge
+            if not args.worker or not args.message:
+                raise SystemExit("rig nudge needs --worker and --message")
+            out = nudge(args.worker, args.message, ledger=_ledger_from(args),
+                        session=args.session,
+                        min_interval_s=args.min_interval, force=args.force)
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "TYPED" else 3
+        if args.action == "relaunch":
+            from nxb.rig import relaunch_pane
+            if not args.worker or not args.session:
+                raise SystemExit("rig relaunch needs --session and --worker")
+            out = relaunch_pane(args.worker, session=args.session,
+                                ledger=_ledger_from(args),
+                                context_limit=args.context_limit,
+                                effort=args.effort)
+            print(json.dumps(out, indent=2))
+            return 0 if out["state"] == "RELAUNCHED" else 3
+        if args.action == "health":
+            from nxb.rig import health
+            ledger = _ledger_from(args)
+            session = args.session or _one_standing(ledger)
+            out = health(session, ledger=ledger)
+            print(json.dumps(out, indent=2))
+            return 0 if "panes" in out else 3
+        if args.action == "usage":
+            from nxb.rig import usage
+            ledger = _ledger_from(args)
+            session = args.session or _one_standing(ledger)
+            out = usage(session, ledger=ledger)
+            print(json.dumps(out, indent=2))
+            return 0 if out.get("state") == "USAGE" else 3
+        if args.action == "checkpoint":
+            from nxb.rig import CHECKPOINT_THRESHOLD, checkpoint_rig
+            ledger = _ledger_from(args)
+            session = args.session or _one_standing(ledger)
+            out = checkpoint_rig(session, ledger=ledger, worker=args.worker,
+                                 threshold=args.threshold or
+                                 CHECKPOINT_THRESHOLD, force=args.force)
+            print(json.dumps(out, indent=2))
+            return 0 if out.get("state") == "PASS" else 3
+        if args.action == "watch":
+            from nxb.rig import CHECKPOINT_THRESHOLD, watch
+            ledger = _ledger_from(args)
+            session = args.session or _one_standing(ledger)
+            out = watch(session, ledger=ledger, interval=args.interval,
+                        threshold=args.threshold or CHECKPOINT_THRESHOLD,
+                        once=args.once)
+            return 0 if (out or {}).get("state") == "PASS" else 3
         if args.action == "reply":
             # A worker FILES its answer where collect reads first, so a
             # report survives its own pane scrolling. [RIG-21]
@@ -453,6 +669,136 @@ def main(argv=None):
                      open_browser=not args.no_open, app=args.app,
                      fresh_token=args.fresh_token)
 
+    if args.cmd == "context":
+        from nxb.context import (GET_CAP_CHARS, SEARCH_LIMIT, Vault,
+                                 log_key, state_key)
+        vault = Vault(_ledger_from(args))
+        try:
+            if args.action == "state":
+                if not args.session:
+                    raise SystemExit("context state needs --session")
+                out = vault.state(args.session)
+            elif args.action == "get":
+                if not args.key:
+                    raise SystemExit("context get needs --key")
+                out = vault.get(args.key, max_chars=args.max_chars or
+                                GET_CAP_CHARS, offset=args.offset)
+            elif args.action == "put":
+                if not args.key:
+                    raise SystemExit("context put needs --key")
+                if bool(args.body) == bool(args.file):
+                    raise SystemExit("context put needs exactly one of "
+                                     "--body or --file")
+                body = args.body
+                if args.file:
+                    with open(args.file, encoding="utf-8") as handle:
+                        body = handle.read()
+                tags = [t.strip() for t in (args.tags or "").split(",")
+                        if t.strip()]
+                out = vault.put(args.key, body, summary=args.summary,
+                                tags=tags, author=args.author)
+            elif args.action == "patch":
+                if not args.key or not args.section:
+                    raise SystemExit("context patch needs --key and --section")
+                if bool(args.body) == bool(args.file):
+                    raise SystemExit("context patch needs exactly one of "
+                                     "--body or --file")
+                body = args.body
+                if args.file:
+                    with open(args.file, encoding="utf-8") as handle:
+                        body = handle.read()
+                out = vault.patch(args.key, args.section, body,
+                                  append=args.append, author=args.author)
+            elif args.action == "map":
+                from nxb.keystroke import load_rig
+                work_dir = args.dir
+                if not work_dir and args.session:
+                    work_dir = (load_rig(vault.ledger, args.session) or {}
+                                ).get("work_dir")
+                if not work_dir:
+                    raise SystemExit("context map needs --dir or --session "
+                                     "(with a recorded work_dir)")
+                out = vault.map(work_dir)
+            elif args.action == "checkpoint":
+                if not args.session or not args.worker:
+                    raise SystemExit("context checkpoint needs --session and "
+                                     "--worker")
+                out = vault.checkpoint(args.session, args.worker)
+            elif args.action == "relocate":
+                if not args.to:
+                    raise SystemExit("context relocate needs --to <folder>")
+                out = vault.relocate(args.to)
+            elif args.action == "search":
+                if not args.query:
+                    raise SystemExit("context search needs --query")
+                out = vault.search(args.query, limit=args.limit or
+                                   SEARCH_LIMIT, prefix=args.prefix or None)
+            elif args.action == "list":
+                out = vault.list(args.prefix)
+            elif args.action == "index":
+                out = vault.reindex()
+            elif args.action == "log":
+                if not args.session or not args.line:
+                    raise SystemExit("context log needs --session and --line")
+                out = vault.append(log_key(args.session), args.line)
+            else:
+                out = {"state": "PATH", "root": vault.root,
+                       "state_note": vault.path_for(state_key(
+                           args.session)) if args.session else None,
+                       "index": __import__("nxb.context", fromlist=["x"])
+                       .index_path(vault.ledger),
+                       "obsidian": ("open this folder as a vault in Obsidian, "
+                                    "or set NXB_VAULT to a folder inside "
+                                    "one of your vaults")}
+        finally:
+            vault.close()
+        print(json.dumps(out, indent=2))
+        return {"REFUSED": 3, "MISSING": 4, "EMPTY": 4}.get(
+            out.get("state"), 0)
+
+    if args.cmd == "bridge":
+        from nxb.bridge import Bridge
+        bridge = Bridge(_ledger_from(args))
+        try:
+            if args.action == "join":
+                if not args.name:
+                    raise SystemExit("bridge join needs --name")
+                out = bridge.join(args.name, runtime=args.runtime,
+                                  note=args.note)
+            elif args.action == "peers":
+                out = bridge.peers()
+            elif args.action == "send":
+                if not args.sender or not args.to:
+                    raise SystemExit("bridge send needs --from and --to")
+                if bool(args.message) == bool(args.message_file):
+                    raise SystemExit("bridge send needs exactly one of "
+                                     "--message or --message-file")
+                text = args.message
+                if args.message_file:
+                    with open(args.message_file, encoding="utf-8") as handle:
+                        text = handle.read()
+                out = bridge.send(args.sender, args.to, text,
+                                  reply_to=args.reply_to)
+            elif args.action == "inbox":
+                if not args.name:
+                    raise SystemExit("bridge inbox needs --name")
+                out = bridge.inbox(args.name, wait=args.wait,
+                                   mark_read=not args.no_mark_read,
+                                   limit=args.limit)
+            elif args.action == "history":
+                if not args.a or not args.b:
+                    raise SystemExit("bridge history needs --a and --b")
+                out = bridge.history(args.a, args.b, limit=args.limit)
+            else:
+                if not args.name:
+                    raise SystemExit("bridge leave needs --name")
+                out = bridge.leave(args.name)
+        finally:
+            bridge.close()
+        print(json.dumps(out, indent=2))
+        # EMPTY is 4, like WAITING: not an answer, not a failure.
+        return {"REFUSED": 3, "EMPTY": 4}.get(out.get("state"), 0)
+
     if args.cmd == "revoke":
         from nxb.tasks import TaskRegistry
         reg = TaskRegistry(_ledger_from(args))
@@ -467,75 +813,28 @@ def main(argv=None):
                           "task_ids": revoked}, indent=2))
         return 0
 
-    if args.cmd in ("mint", "validate"):
-        from nxb.roster import discover
+    if args.cmd == "mint":
+        # The whole of minting lives in nxb/minting.py so `rig dispatch` can
+        # mint without a second process. [nxb-079]
+        from nxb.minting import mint_task
+        task_id, refusal = mint_task(_ledger_from(args), args.worker,
+                                     session=args.session,
+                                     supersede=args.supersede,
+                                     force=args.force)
+        if refusal is not None:
+            print(json.dumps(refusal, indent=2))
+            return 3
+        # JSON on both paths. Success used to print a bare id while a refusal
+        # printed JSON, so nothing could parse the output without knowing the
+        # answer first.
+        print(json.dumps({"state": "ISSUED", "task_id": task_id,
+                          "worker": args.worker}, indent=2))
+        return 0
+
+    if args.cmd == "validate":
         from nxb.tasks import TaskRegistry
         reg = TaskRegistry(_ledger_from(args))
         try:
-            if args.cmd == "mint":
-                # Both populations: sessions the runtime registry can name,
-                # and workers a rig declared. A Codex pane appears only in the
-                # second, and is no less declared for it. EVERY rig recorded
-                # next to the ledger counts unless --session narrows it --
-                # RIG-4 was a default session name drifting from the rig
-                # actually standing, refused as if the worker were undeclared.
-                from nxb.keystroke import rig_sessions
-                from nxb.rig import rig_roster
-                from nxb.roster import Roster
-                ledger = _ledger_from(args)
-                # LIVE rigs only. rig_sessions() lists every rig ever
-                # recorded next to this ledger, including ones torn down
-                # hours ago, and a dead rig has no workers to contribute.
-                from nxb.rig import live_rig_sessions
-                sessions = ([args.session] if args.session
-                            else live_rig_sessions(ledger))
-                from nxb.rig import RigTmuxError
-                entries, seen = list(discover().entries), {}
-                for s in sessions:
-                    try:
-                        found = rig_roster(ledger, s).entries
-                        for e in found:
-                            if e.name == args.worker:
-                                seen.setdefault(e.name, []).append(s)
-                        entries.extend(found)
-                    except RigTmuxError as exc:
-                        # Refuse rather than mint against a roster we know is
-                        # incomplete: a silently short roster is how RIG-4
-                        # blamed the operator for a worker that existed.
-                        print(json.dumps({"state": "REFUSED",
-                                          "reason": "rig_tmux_unavailable",
-                                          "detail": exc.detail}, indent=2))
-                        return 3
-                # Scenario-built fleets share worker names by design, so with
-                # two rigs standing "CC Worker 1" names two different panes.
-                # Minting for whichever came first would hand out a ticket
-                # that types into someone else's fleet. [RIG-18]
-                rigs = seen.get(args.worker, [])
-                if len(rigs) > 1:
-                    print(json.dumps({
-                        "state": "REFUSED", "reason": "roster_ambiguous_worker",
-                        # UNREACHABLE while RIG-20 holds, and kept on
-                        # purpose: it fires on a naming REGRESSION rather
-                        # than on operator behaviour, which is the one thing
-                        # that could bring the collision back.
-                        "detail": (f"{args.worker!r} exists in {len(rigs)} "
-                                   f"standing rigs: {', '.join(sorted(rigs))}. "
-                                   f"Names are supposed to carry their rig "
-                                   f"(RIG-20), so this means scoped naming "
-                                   f"has regressed."),
-                        "remedy": [f"--session {r}" for r in sorted(rigs)]},
-                        indent=2))
-                    return 3
-                task_id, refusal = reg.mint(args.worker, Roster(entries))
-                if refusal is not None:
-                    print(json.dumps(refusal, indent=2))
-                    return 3
-                # JSON on both paths. Success used to print a bare id while
-                # a refusal printed JSON, so nothing could parse the output
-                # without knowing the answer first.
-                print(json.dumps({"state": "ISSUED", "task_id": task_id,
-                                  "worker": args.worker}, indent=2))
-                return 0
             verdict = reg.validate(args.task_id, args.worker)
             print(json.dumps(verdict, indent=2))
             # 0 means PROCEED. Anything else means REFUSE THE DIRECTIVE.

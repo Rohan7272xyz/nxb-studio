@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="340" viewBox="0 0 1180 340" role="img" aria-label="Stand-up comparison. After the tmux window is built and pinned at 240 by 60, a Claude Code pane is launched already named with a session id and its rule and role in the system prompt, then awaits READY and is done. A Codex pane launches unnamed, awaits READY, is renamed with a slash command, then has its enrolment rule and role typed in and must acknowledge. Codex steps can fail into REFUSED with a remedy. Both paths end in save_rig.">
+  <style>
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+.t{font-size:14px;font-weight:600;}
+.s{font-size:11.5px;fill:#586472;}
+.sm{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;}
+.hdr{font-size:11px;font-weight:600;letter-spacing:.12em;fill:#586472;}
+.lbl{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;paint-order:stroke;stroke:#FFFFFF;stroke-width:5px;stroke-linejoin:round;}
+.lbl.g{fill:#6F3AA8;font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:600;font-size:12px;}
+.lbl.w{fill:#A0561A;}
+.box{fill:#FFFFFF;stroke:#CBD3DC;stroke-width:1.5;}
+.op{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1.5;}
+.cc{fill:#F8E9E1;stroke:#B4552C;stroke-width:1.5;}
+.cx{fill:#E0EFF5;stroke:#1C6A88;stroke-width:1.5;}
+.store{fill:#E4E9EE;stroke:#CBD3DC;stroke-width:1.2;}
+.band{fill:none;stroke:#CBD3DC;stroke-width:1.2;}
+.tmux{fill:none;stroke:#586472;stroke-width:1.2;stroke-dasharray:5 4;}
+.warnbox{fill:#FBF0E4;stroke:#A0561A;stroke-width:1.2;}
+.ln{fill:none;stroke:#586472;stroke-width:1.4;}
+.ln.g{stroke:#6F3AA8;stroke-width:2.2;}
+.ln.d{stroke-dasharray:5 4;}
+.ln.w{stroke:#A0561A;stroke-dasharray:4 3;}
+.life{stroke:#CBD3DC;stroke-width:1.2;stroke-dasharray:3 4;}
+.act{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1;}
+.ah{fill:#586472;}
+.ah.g{fill:#6F3AA8;}
+.ah.w{fill:#A0561A;}
+.tc{fill:#B4552C;} .tx{fill:#1C6A88;} .tg{fill:#6F3AA8;} .tw{fill:#A0561A;}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+</style>
+  <defs>
+    <marker id="f3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="f3w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah w"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1180" height="340" rx="8" fill="#FFFFFF"/>
+
+  <rect x="20" y="128" width="130" height="60" rx="5" class="box"/>
+  <text x="85" y="153" text-anchor="middle" class="t mono" style="font-size:12.5px">_build_window</text>
+  <text x="85" y="171" text-anchor="middle" class="s">pinned 240 × 60</text>
+  <polyline points="150,158 175,158 175,98 197,98" class="ln" marker-end="url(#f3a)"/>
+  <polyline points="175,158 175,218 197,218" class="ln" marker-end="url(#f3a)"/>
+
+  <!-- claude lane -->
+  <text x="560" y="50" text-anchor="middle" class="lbl w">trust prompt? answer it in the pane, no rebuild</text>
+  <rect x="200" y="70" width="250" height="56" rx="5" class="cc"/>
+  <text x="325" y="89" text-anchor="middle" class="t tc">Claude Code launch</text>
+  <text x="325" y="105" text-anchor="middle" class="sm">claude -n &lt;name&gt; --session-id</text>
+  <text x="325" y="119" text-anchor="middle" class="sm">--append-system-prompt &lt;rule,role&gt;</text>
+  <line x1="450" y1="98" x2="487" y2="98" class="ln" marker-end="url(#f3a)"/>
+  <rect x="490" y="70" width="140" height="56" rx="5" class="box"/>
+  <text x="560" y="93" text-anchor="middle" class="t">await READY</text>
+  <text x="560" y="111" text-anchor="middle" class="s">named, enrolled already</text>
+  <polyline points="630,98 1100,98 1100,125" class="ln" marker-end="url(#f3a)"/>
+  <text x="865" y="90" text-anchor="middle" class="lbl">enrolment = launch · role bound in the system prompt</text>
+
+  <!-- codex lane -->
+  <rect x="200" y="190" width="250" height="56" rx="5" class="cx"/>
+  <text x="325" y="209" text-anchor="middle" class="t tx">Codex launch</text>
+  <text x="325" y="225" text-anchor="middle" class="sm">codex -m &lt;model&gt; -c &lt;ceiling&gt;</text>
+  <text x="325" y="239" text-anchor="middle" class="s">boots with no name</text>
+  <line x1="450" y1="218" x2="487" y2="218" class="ln" marker-end="url(#f3a)"/>
+  <rect x="490" y="190" width="140" height="56" rx="5" class="box"/>
+  <text x="560" y="213" text-anchor="middle" class="t">await READY</text>
+  <text x="560" y="231" text-anchor="middle" class="s">“Ask Codex” prefix</text>
+  <line x1="630" y1="218" x2="667" y2="218" class="ln" marker-end="url(#f3a)"/>
+  <rect x="670" y="190" width="140" height="56" rx="5" class="box"/>
+  <text x="740" y="213" text-anchor="middle" class="t mono" style="font-size:12.5px">/rename &lt;name&gt;</text>
+  <text x="740" y="231" text-anchor="middle" class="s">wait for thread id</text>
+  <line x1="810" y1="218" x2="847" y2="218" class="ln" marker-end="url(#f3a)"/>
+  <rect x="850" y="190" width="150" height="56" rx="5" class="box"/>
+  <text x="925" y="209" text-anchor="middle" class="t">type rule + role</text>
+  <text x="925" y="225" text-anchor="middle" class="s">“THIS IS NOT A TASK”</text>
+  <text x="925" y="239" text-anchor="middle" class="s">await ack · enrolment = typed</text>
+  <polyline points="1000,218 1100,218 1100,191" class="ln" marker-end="url(#f3a)"/>
+
+  <rect x="1040" y="128" width="120" height="60" rx="5" class="box"/>
+  <text x="1100" y="153" text-anchor="middle" class="t mono" style="font-size:12.5px">save_rig</text>
+  <text x="1100" y="171" text-anchor="middle" class="s">READY or REFUSED</text>
+
+  <!-- refusals -->
+  <line x1="560" y1="246" x2="560" y2="283" class="ln w" marker-end="url(#f3w)"/>
+  <line x1="740" y1="246" x2="740" y2="283" class="ln w" marker-end="url(#f3w)"/>
+  <line x1="925" y1="246" x2="925" y2="283" class="ln w" marker-end="url(#f3w)"/>
+  <rect x="200" y="286" width="800" height="34" rx="4" class="warnbox"/>
+  <text x="600" y="308" text-anchor="middle" class="s" style="fill:#A0561A">REFUSED with a remedy: trust or update prompt · hooks review · rename never landed · rule never acknowledged</text>
+</svg>

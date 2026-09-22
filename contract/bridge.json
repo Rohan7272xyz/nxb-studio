@@ -1,0 +1,17 @@
+{
+  "hop": "bridge",
+  "purpose": "Two MCP-speaking agents exchange messages through the nxb server with no rig, no minted ids and no worker rule: for the basic back-and-forth that does not need a programme. [nxb-080, 2026-09-12]",
+  "refusal_vocabulary": [
+    "bridge_bad_name",
+    "bridge_unknown_peer",
+    "bridge_empty_message"
+  ],
+  "_shape": "join(name) announces a peer; send(from, to, text) files a message for a JOINED name; inbox(name, wait) returns unread messages and WAITS INSIDE THE CALL for the first one (capped at 240 seconds, below an MCP client's tool timeout); history(a, b) reads a conversation; peers() lists who is on the bridge and when they were last seen. The mailbox is two tables in the ledger, because each MCP client spawns its own server process and the ledger is the one file every nxb process already agrees on.",
+  "_refusals": {
+    "bridge_bad_name": "a name that is empty, longer than 64 characters or carries control characters.",
+    "bridge_unknown_peer": "a send to a name nobody joined under. Refused, naming who is on the bridge, rather than filed into a mailbox with no reader: a message that vanishes is this project's founding defect.",
+    "bridge_empty_message": "an empty body, or one over 64,000 characters (send a file path instead)."
+  },
+  "_trust": "A name is self-declared. The bridge lives on one machine and anything that can write the ledger is the operator; this is addressing, not authentication. Same statement as the rest of the broker.",
+  "_wait": "The inbox waits inside the tool call on a 1 to 5 second table poll, so an agent spends one tool round-trip per wait and not one per poll (the nxb-079 rule). EMPTY says how long it waited and is never a failure; call again."
+}

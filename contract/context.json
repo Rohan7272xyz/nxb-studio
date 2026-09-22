@@ -1,0 +1,15 @@
+{
+  "hop": "context",
+  "purpose": "An Obsidian-compatible markdown vault beside the ledger, with a rebuildable FTS5 index and a size discipline, so a fresh worker orients from a bounded state note instead of surveying the documents and an orchestrator receives a summary and a path instead of a whole report. [nxb-081, 2026-09-12]",
+  "refusal_vocabulary": [
+    "context_bad_key",
+    "context_note_too_big",
+    "context_not_found",
+    "context_empty_body"
+  ],
+  "_shape": "state(session) reads rigs/<session>/STATE (MISSING, with how to write it, when absent); get(key) reads one note BOUNDED at 32,000 characters with truncated and next_offset; put(key, body) writes a note whole and REFUSES a state note over 24,000 characters; search(query) returns at most eight snippets of about 300 characters with keys, two per note, never a body; list(prefix) lists keys with summaries. collect files any answer over 6,000 characters as reports/<task id> plus a task card and a log line, and returns the worker's SUMMARY paragraph and the path (--full for the whole text). A directive to a rig that has a state note carries one ORIENT FIRST sentence naming its path.",
+  "_index": "Beside the ledger (vault-index.db), never inside the vault, never the source of truth: every row is a deterministic function of bytes on disk (headings and CHUNK-sized passages, porter-stemmed FTS5), a staleness sweep compares (mtime_ns, size) before each search within a budget and reports what it is behind on, and `context index` rebuilds it from nothing. Life OS ADR-0048's design, on its reasoning.",
+  "_why_caps": "MEASURED on the Pact programme: fresh workers read about 99K tokens per task to orient (18M uncached over 185 tasks, re-sent on every later request of the task), and 250 filed replies totalling 6.3M tokens entered long-lived orchestrator contexts whole. A store that does not bound what enters a context adds tokens; these caps are the mechanism.",
+  "_explored": "Obsidian's Local REST API plugin (5.0, 2026-07) serves MCP itself at https://127.0.0.1:27124/mcp/ with a bearer token; other Obsidian MCP servers wrap it. For agents on this machine that is a network hop and a plugin to reach files they can open directly, so the vault here is plain files any Obsidian can open, and NXB_VAULT may point into an Obsidian vault of the operator's choosing. Hosted memory layers (mem0, Zep/Graphiti, Letta) retrieve per turn, which is the polling cost pattern nxb-079 removed, and are not stdlib.",
+  "_trust": "Notes are written by agents and the operator; the index carries no model-written text of its own. Nothing here is authentication."
+}

@@ -104,9 +104,28 @@ def checks(deep=False):
     out.append(("claude flags",) + _flags(
         "claude", claude_help,
         ["--model", "--effort", "--append-system-prompt",
-         "--dangerously-skip-permissions", "-p"]))
+         "--dangerously-skip-permissions", "-p",
+         # nxb-079: the context ceiling and the resume address.
+         "--autocompact", "--session-id", "--resume"]))
     out.append(("codex flags",) + _flags(
-        "codex", codex_help, ["--model", "--config", "--sandbox"]))
+        "codex", codex_help, ["--model", "--config", "--sandbox",
+                              # nxb-079: `codex resume <thread>` is how a
+                              # downed rig comes back on its conversations.
+                              "resume"]))
+    # The Codex context ceiling is a CONFIG KEY passed with -c, so --help
+    # cannot vouch for it; the binary's own ConfigToml field list can.
+    codex_bin = _binary("codex")
+    if not codex_bin:
+        out.append(("codex config keys", ABSENT, "codex is not installed"))
+    elif "model_auto_compact_token_limit" in _blob(codex_bin):
+        out.append(("codex config keys", OK,
+                    "model_auto_compact_token_limit is still a config key; "
+                    "nxb passes it on every Codex launch"))
+    else:
+        out.append(("codex config keys", DRIFT,
+                    "model_auto_compact_token_limit is no longer in the "
+                    "codex binary; the context ceiling nxb passes on every "
+                    "Codex launch may be ignored or refused"))
 
     # -- readiness markers: BOOTED, never grepped --------------------------
     #

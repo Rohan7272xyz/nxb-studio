@@ -239,7 +239,7 @@ class FiledRepliesSurviveScrolling(unittest.TestCase):
                 mock.patch("nxb.rig.send_line",
                            lambda p, t, **k: typed.append(t)):
             out = keystroke.send_directive("hub W", "nxbt-1", "do it",
-                                           ledger=self.ledger)
+                                           ledger=self.ledger, fresh=False)
         self.assertEqual(out["state"], "TYPED")
         self.assertIn('rig reply --worker "hub W"', typed[0])
         self.assertIn(f"--ledger {self.ledger}", typed[0])
@@ -330,11 +330,18 @@ class ATypedRoleIsNotATask(unittest.TestCase):
     not a task, as the enrolment rule already does of itself."""
 
     def test_the_typed_role_preamble_forbids_starting(self):
+        """Since nxb-079 the role is typed INSIDE the enrolment message (one
+        turn per pane, one acknowledgement), so the preamble lives in
+        enroll.typed_role and stand_up reaches it through _typed_rule."""
         import inspect
-        src = inspect.getsource(rig.stand_up)
-        self.assertIn("THIS IS NOT A TASK", src)
-        self.assertIn("do NOTHING now", src)
-        self.assertIn("marked directive carrying an nxb task id", src)
+
+        from nxb.enroll import typed_role
+        text = typed_role("MISSION. Build the thing. DELIVERABLE. A report.")
+        self.assertIn("THIS IS NOT A TASK", text)
+        self.assertIn("do NOTHING now", text)
+        self.assertIn("marked directive carrying an nxb task id", text)
+        self.assertIn("_typed_rule", inspect.getsource(rig.stand_up))
+        self.assertEqual(typed_role(""), "", "no role, no paragraph")
 
 
 class LongTextIsPastedNotTyped(unittest.TestCase):

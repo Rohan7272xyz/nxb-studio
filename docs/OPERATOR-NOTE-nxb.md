@@ -348,6 +348,72 @@ It held across the three cases above. Whether it survives a fifty-turn session
 is **not measured** — see RIG-3. Do not assume the two are equivalent because
 the wording is.
 
+## The context budget (nxb-079)
+
+Read `docs/CONTEXT-BUDGET-nxb-079.md` once; the numbers are from Rohan's
+48-hour Pact programme and they decide how the commands above are meant to be
+used. The short form:
+
+**Cost is requests times context.** Every command an orchestrator runs is a
+model round-trip that re-sends its whole context. So:
+
+- `rig dispatch --worker W --message-file path` mints and types in one
+  command. Write the directive to a file first; a long directive on a
+  command line sits in the orchestrator's context twice.
+- `rig collect --worker W --task-id <id> --wait 600` waits inside the
+  command. Never let an orchestrator poll; the brief now forbids it and says
+  why. `rig await --wait 600 --task-id a --task-id b` waits on several.
+- A dispatch starts the worker **fresh** (`/clear`, rule and role re-typed
+  for Codex and verified). `--keep-context` is for a revision of that same
+  worker's last task and nothing else. A worker that still holds an unfiled
+  task is refused rather than cleared.
+- One outstanding directive per worker: `mint` refuses a second id until the
+  first is filed or `--supersede`d.
+- Every pane launches with a context ceiling: `context_limit` in the Studio
+  inspector, `--autocompact` on Claude, `model_auto_compact_token_limit` on
+  Codex. Screenshot-heavy reviewers want a lower ceiling, not a higher one.
+
+**After a restart, resume.** `rig resume --session X --continue` reopens
+every pane on its own conversation and tells the ones with unfinished tasks
+to continue. A rebuild is 25 fresh threads that re-read everything and redo
+what was in flight; it is the most expensive thing a fleet can do, and it
+happened twice on the programme that paid for this section.
+
+**Watchers read `rig health` and type through `rig nudge`.** Never raw
+`send-keys` into an agent pane from a script.
+
+## Two agents, no rig: the bridge (nxb-080)
+
+Five MCP tools (`nxb_bridge_join`, `nxb_bridge_peers`, `nxb_bridge_send`,
+`nxb_bridge_inbox`, `nxb_bridge_history`) and the same five under
+`python3 -m nxb bridge`. An agent joins under a name, sends to a name, and
+reads an inbox that waits inside the call. The mailbox is two tables in the
+ledger, so any two nxb MCP clients on this machine share it with no daemon.
+Names are self-declared; a send to a name nobody joined under is refused and
+names who is there. `docs/BRIDGE-nxb-080.md` has the prompts to give each
+side and the limits.
+
+## The context store (nxb-081)
+
+`~/.nxb/vault` (or `NXB_VAULT`) is an Obsidian-compatible vault with an FTS5
+index beside the ledger. Three things use it without you doing anything:
+`collect` files long answers there and returns the worker's `SUMMARY:` plus
+a path; a task card and a log line are written per collected task; and
+every directive to a rig that has a state note tells the worker to read that
+note first. The one thing that is yours, or your orchestrator's: keep
+`rigs/<session>/STATE` current and under 24,000 characters, one section at
+a time (`context patch`). `nxb context state`, `put`, `patch`, `get`,
+`search`, `list`, `map`, `checkpoint`, `index`, `path`, `relocate`; the
+same as `nxb_context_*` over MCP. `docs/CONTEXT-STORE-nxb-081.md`.
+
+**Checkpoints (nxb-082).** Panes launch with a 100K ceiling. Run
+`python3 -m nxb rig watch --session S` detached per rig: a pane over 80
+percent writes a checkpoint note to the vault, is reset onto it, and
+continues with the same task id. Nothing is reset without a confirmed note.
+`rig health` shows each pane's context. The vault's `NXB.base` is a
+dashboard in Obsidian: tasks, state notes, checkpoints, reports, no tokens.
+`docs/CHECKPOINTS-nxb-082.md`.
+
 ## What this does not do
 
 It starts **fresh workers**. It does not talk to your existing Claude Code

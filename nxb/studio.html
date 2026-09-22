@@ -442,6 +442,9 @@ function draftSpec(t){
       if(n.effort) a.effort = n.effort;
       if(n.dir) a.working_directory = n.dir;
       if(n.instructions) a.instructions = n.instructions;
+      if(n.context_limit !== "" && n.context_limit != null)
+        a.context_limit = Number(n.context_limit);
+      if(n.tools) a.tools = n.tools;
       if(n.deployed) a.deployed_name = n.deployed;
       return a;
     })};
@@ -453,6 +456,8 @@ function tabFromDraft(d){
     nodes:(d.agents||[]).map(a=>({id:a.node_id, name:a.name, role:a.role,
       runtime:a.runtime, model:a.model||"", effort:a.effort||"",
       dir:a.working_directory||"", instructions:a.instructions||"",
+      context_limit:(a.context_limit==null ? "" : a.context_limit),
+      tools:a.tools||"",
       deployed:a.deployed_name||undefined, x:a.x, y:a.y})),
     _draftId:d.draft_id, _revision:d.revision||0};
   t._synced = JSON.stringify(draftSpec(t));
@@ -665,7 +670,7 @@ function add(role, runtime, x, y){
     return log("a rig has at most one orchestrator","err");
   mark();
   const n = {id:++seq, role, runtime, name:defaultName(role,runtime),
-             model:"", effort:"", dir:"", instructions:"",
+             model:"", effort:"", dir:"", instructions:"", context_limit:"", tools:"",
              x: Math.round(x ?? 320), y: Math.round(y ?? 200)};
   t.nodes.push(n); sel = n.id; save(); paint();
 }
@@ -820,6 +825,13 @@ function inspector(){
         CATALOG._configured?.[n.runtime]?.model))}
     ${field("Reasoning", picker("fEffort", CATALOG[n.runtime].efforts, n.effort,
         CATALOG._configured?.[n.runtime]?.effort))}
+    ${field("Context cap", `<input id="fCtx" type="number" min="0" step="10000"
+      placeholder="100000 (default; rig watch checkpoints at 80%)"
+      title="Auto-compact ceiling in tokens. Every request re-sends the pane's whole context, so this is the largest lever on cost. 0 disables it."
+      value="${esc(String(n.context_limit ?? ""))}">`)}
+    ${field("Tools", `<input id="fTools" placeholder="core (Bash, Read, Edit, Write, Glob, Grep)"
+      title="Claude only. 'core' drops about 19K tokens of unused built-in tool schemas from every request; 'all' keeps everything; or a comma-separated list."
+      value="${esc(n.tools||"")}">`)}
     ${field("Directory", `<input id="fDir" placeholder="(the rig's dir)" value="${esc(n.dir||"")}">`)}
     <div class="expander" id="fExp"><span>Role / startup instructions</span><span>›</span></div>
     <div id="roleBox" hidden>
@@ -858,7 +870,7 @@ function inspector(){
       save(); paint();
     };
   };
-  text("fName","name"); text("fDir","dir");
+  text("fName","name"); text("fDir","dir"); text("fCtx","context_limit"); text("fTools","tools");
   choice("fRole","role"); choice("fRt","runtime");
   choice("fModel","model"); choice("fEffort","effort");
   const ta = $("#instr"), roleBox = $("#roleBox");
@@ -948,7 +960,10 @@ const launchPayload = t => ({
   session:t.name, dir:t.dir, layout:t.layout, peers:t.peers||[],
   agents:t.nodes.map(n=>({name:n.name, role:n.role, runtime:n.runtime,
     model:n.model||null, effort:n.effort||null, dir:n.dir||null,
-    instructions:n.instructions||null}))
+    instructions:n.instructions||null,
+    context_limit:(n.context_limit==="" || n.context_limit==null)
+      ? null : Number(n.context_limit),
+    tools:n.tools||null}))
 });
 
 function hideRecovery(session){
@@ -1095,7 +1110,7 @@ function openRigInTab(r, {quiet=false} = {}){
       name: String(p.name).startsWith(r.session+" ")
             ? String(p.name).slice(r.session.length+1) : p.name,
       model: p.model||"", effort: p.effort||"", dir:"", instructions:"",
-      deployed: p.name,
+      context_limit:"", deployed: p.name,
       x: isOrch ? Math.round(Math.max(0,kids.length-1)*250/2)+60 : 60+i*250,
       y: isOrch ? 60 : 300};
   });
@@ -1136,6 +1151,7 @@ function rigList(box, compact){
       <span class="cnt">${n} agent${n===1?"":"s"}</span>
       <button class="open" title="open this rig in a tab">open</button>
       ${r.standing?`<button class="att">attach</button>`:""}
+      ${(!r.standing && r.resumable)?`<button class="res" title="bring it back on its original conversations (no rebuild, no lost context)">resume</button>`:""}
       ${r.standing?`<button class="kill">×</button>`
                   :`<button class="forget" title="remove this record">×</button>`}</div>
       ${compact?"":`<div class="w">${r.panes.map(p=>
@@ -1154,6 +1170,30 @@ function rigList(box, compact){
         body:JSON.stringify({session:r.session})});
         log(`forgot the record for <b>${esc(r.session)}</b>`,"ok");
       }catch(e){ log(esc(e.message),"err"); }
+      refresh();
+    };
+    /* RESUME, NOT REBUILD. A rig that went down with the machine holds its
+       conversation ids in its record; both runtimes can reopen them. A
+       rebuild is 25 fresh threads that re-read everything and redo what was
+       in flight, which is the most expensive thing a fleet can do. */
+    const res = el.querySelector(".res");
+    if(res) res.onclick = async () => {
+      if(!confirm(`Resume "${r.session}" on its original conversations? `
+        + `${r.panes.length} agents come back where they left off. Panes with `
+        + `unfinished tasks will be told to continue them.`)) return;
+      res.disabled = true;
+      log(`resuming <b>${esc(r.session)}</b> … every pane reopens its own thread.`);
+      try{
+        const rep = await api("/api/rig/resume",{method:"POST",
+          body:JSON.stringify({session:r.session, continue:true})});
+        const open = Object.keys(rep.outstanding||{});
+        log(`<b>${esc(r.session)}</b> RESUMED: ${(rep.resumed||[]).length} resumed, `
+          + `${(rep.relaunched||[]).length} relaunched fresh`
+          + (open.length ? `; told to continue: ${open.map(esc).join(", ")}` : ""), "ok");
+      }catch(e){
+        const b = e.body || {};
+        log(esc(b.detail || b.error || e.message), "err");
+      }
       refresh();
     };
     const att = el.querySelector(".att");

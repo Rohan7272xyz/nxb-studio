@@ -166,8 +166,14 @@ def _add(into, other):
 
 
 def _claude_file(path):
-    """{day: totals} for one Claude transcript."""
-    days = {}
+    """{day: totals} for one Claude transcript.
+
+    ONE RECORD PER REQUEST. MEASURED 2026-09-12 (nxb-082.1): a transcript
+    writes one assistant record per content block, all carrying the same
+    `usage`, so the Studio panel had counted a pane's cache reads about
+    three times over since nxb-070. Deduped on requestId.
+    """
+    days, seen = {}, set()
     with open(path, errors="replace") as handle:
         for line in handle:
             if '"usage"' not in line:
@@ -179,6 +185,11 @@ def _claude_file(path):
             usage = (record.get("message") or {}).get("usage")
             if not isinstance(usage, dict):
                 continue
+            key = record.get("requestId") or (record.get("message") or {}).get("id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
             day = str(record.get("timestamp") or "")[:10]
             if not day:
                 continue

@@ -336,8 +336,16 @@ class Studio:
                         if scope:
                             item["trust_scope"] = scope
                 panes.append(item)
+            # A rig that went down with the machine can be RESUMED on its
+            # recorded conversation ids rather than rebuilt from nothing.
+            # [RIG-26] Only offered when it is down and the record has ids.
+            from nxb.rig import _resume_id
+            resumable = (not standing and any(
+                _resume_id(p) for p in record.get("panes", [])))
             rigs.append({"session": session, "standing": standing,
                          "peers": list(record.get("peers") or []),
+                         "resumable": resumable,
+                         "work_dir": record.get("work_dir"),
                          "panes": panes})
         return {"rigs": rigs, "ledger": self.ledger,
                 "managed": self.managed,
@@ -466,6 +474,23 @@ class Studio:
             return 404, {"error": f"no record for {session}"}
         return 200, {"state": "FORGOTTEN", "session": session}
 
+    def resume(self, body):
+        """Bring a downed rig back on its original conversations. [RIG-26]
+
+        The operator's act, like `up`: nothing resumes at login by itself,
+        because an unattended fleet coming back on its own is exactly the
+        unattended spend this release exists to stop.
+        """
+        from nxb.rig import resume
+        session = str(body.get("session") or "").strip()
+        if not session:
+            return 400, {"error": "which rig?"}
+        with self.lock:
+            report = resume(session, ledger=self.ledger,
+                            work_dir=body.get("dir") or None,
+                            continue_notes=bool(body.get("continue")))
+        return (200 if report.get("state") == "RESUMED" else 409), report
+
     def down(self, body):
         from nxb.rig import tear_down
         session = str(body.get("session") or "").strip()
@@ -554,6 +579,7 @@ def handler_for(studio):
             except ValueError:
                 return self._send(400, {"error": "malformed JSON"})
             routes = {"/api/rig/up": studio.up,
+                      "/api/rig/resume": studio.resume,
                       "/api/rig/trust-and-retry": studio.trust_and_retry,
                       "/api/rig/hooks-and-retry": studio.hooks_and_retry,
                       "/api/rig/down": studio.down,

@@ -47,8 +47,12 @@ A compliant orchestrator refused to cross rigs. The rule was the wall.
 Hub-and-spoke. The hub rig lists the domain rigs as peers; the domain rigs
 list none, so they can only answer. A peer mesh would let A wait on B while
 B waits on A, and `collect` is a blocking poll with no deadline by design.
-The hub polls a peer every few minutes, because a peer's task is itself a
-whole wave of dispatches and can take hours. `WAITING` is still not failure.
+A peer's task is itself a whole wave of dispatches and can take hours, so the
+hub collects it with `rig collect --wait 900` (or `rig await` across several
+peers), which waits inside the command rather than in the hub's own turn.
+`WAITING` is still not failure. (Corrected by nxb-079: "polls every few
+minutes" was the single most expensive sentence in the system; see
+docs/CONTEXT-BUDGET-nxb-079.md.)
 
 ## Not done
 

@@ -44,7 +44,7 @@ from nxb.studio_drafts import LAYOUTS, ROLES, RUNTIMES
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "nxb"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.5.0"
 
 #: The ledger every tool call uses. Required, absolute, and taken from the
 #: environment because an MCP tool call has no shell to pass a flag through.
@@ -71,6 +71,18 @@ _AGENT_SCHEMA = {
         "instructions": {
             "type": "string",
             "description": "Optional standing role/startup instructions."},
+        "tools": {
+            "type": "string",
+            "description": ("Optional, Claude only: 'core' (default: Bash, "
+                            "Read, Edit, Write, Glob, Grep; about 19K tokens "
+                            "of unused tool schemas off every request), "
+                            "'all', or a comma-separated list of tool names.")},
+        "context_limit": {
+            "type": "integer", "minimum": 0,
+            "description": ("Optional auto-compact ceiling in tokens (Claude "
+                            "--autocompact, Codex model_auto_compact_token_"
+                            "limit). Omit for the runtime default (200000 "
+                            "Claude, 160000 Codex); 0 disables it.")},
         "node_id": {
             "type": "integer", "minimum": 1,
             "description": ("Stable canvas identity. Omit on create; preserve "
@@ -234,6 +246,215 @@ _TOOLS = [
             }),
             "required": ["session", "working_directory", "agents"],
             "additionalProperties": False,
+        },
+    },
+    # ---- the context store: state notes, reports, search. [nxb-081] -----
+    {
+        "name": "nxb_context_state",
+        "description": (
+            "A rig's orientation note (rigs/<session>/STATE, at most 24,000 "
+            "characters): what the programme is, what is done, what is open, "
+            "where things live. Read this FIRST instead of surveying the "
+            "documents; it is what every fresh worker is pointed at."),
+        "inputSchema": {"type": "object",
+                        "properties": {"session": {"type": "string"}},
+                        "required": ["session"], "additionalProperties": False},
+    },
+    {
+        "name": "nxb_context_get",
+        "description": (
+            "One note's body, BOUNDED (default 32,000 characters; the result "
+            "says if there is more and where the file is). Everything you "
+            "read stays in your context, so prefer nxb_context_search and "
+            "read a note only when its snippet is not enough."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string",
+                        "description": "e.g. rigs/demo/STATE, reports/nxbt-…, "
+                                       "notes/decisions"},
+                "max_chars": {"type": "integer", "minimum": 200,
+                              "maximum": 200000},
+                "offset": {"type": "integer", "minimum": 0},
+            },
+            "required": ["key"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_context_put",
+        "description": (
+            "Write a note whole (Obsidian-compatible markdown with "
+            "frontmatter). A state note (key ending /STATE) is REFUSED over "
+            "24,000 characters: it must stay small enough for every fresh "
+            "worker to read first. Put detail in its own note and link it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string"},
+                "body": {"type": "string"},
+                "summary": {"type": "string",
+                            "description": "One line; shown in lists."},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "author": {"type": "string"},
+            },
+            "required": ["key", "body"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_context_patch",
+        "description": (
+            "Replace (or append to) ONE heading section of a note, for the "
+            "cost of the section. Use it to keep a state note's Done and "
+            "Open sections current instead of rewriting the whole note. A "
+            "missing section is added at the end; the note's cap still "
+            "applies to the result."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string"},
+                "section": {"type": "string",
+                            "description": "The heading text, any level."},
+                "body": {"type": "string"},
+                "append": {"type": "boolean", "default": False},
+                "author": {"type": "string"},
+            },
+            "required": ["key", "section", "body"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_context_map",
+        "description": (
+            "The map note for a project directory (maps/<name>, at most "
+            "12,000 characters): modules, entry points, how to build and "
+            "test, gotchas. Read it instead of exploring the code. MISSING "
+            "says how to write one."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"work_dir": {"type": "string"}},
+            "required": ["work_dir"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_context_search",
+        "description": (
+            "Search every note (state notes, filed reports, task cards, "
+            "notes) lexically. Returns short SNIPPETS with keys, never "
+            "bodies: a few hundred tokens, not a file. Pick precise terms; "
+            "search again if the first try misses."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "prefix": {"type": "string",
+                           "description": "Restrict to keys under this "
+                                          "prefix, e.g. rigs/demo/"},
+            },
+            "required": ["query"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_context_list",
+        "description": ("Notes under a key prefix: key, kind, updated_at, "
+                        "size and one-line summary. Read-only."),
+        "inputSchema": {"type": "object",
+                        "properties": {"prefix": {"type": "string"}},
+                        "additionalProperties": False},
+    },
+    # ---- the bridge: two MCP agents talk with no rig. [nxb-080] ----------
+    {
+        "name": "nxb_bridge_join",
+        "description": (
+            "Join the nxb bridge under a name, so another MCP agent on this "
+            "machine (a Claude Code terminal session, the Codex app, a "
+            "script) can address you. Idempotent. Returns who else is on the "
+            "bridge and how many messages already wait for you. Names are "
+            "self-declared: addressing, not authentication."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "Your bridge name, 1 to 64 printable "
+                                        "characters, e.g. 'claude-terminal'."},
+                "runtime": {"type": "string",
+                            "description": "Optional: what you are, e.g. "
+                                           "claude_code or codex."},
+                "note": {"type": "string",
+                         "description": "Optional one-line note for peers."},
+            },
+            "required": ["name"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_bridge_peers",
+        "description": ("Who is on the bridge: each name, its runtime and "
+                        "note, when it was last seen, and how many unread "
+                        "messages it holds. Read-only."),
+        "inputSchema": {"type": "object", "properties": {},
+                        "additionalProperties": False},
+    },
+    {
+        "name": "nxb_bridge_send",
+        "description": (
+            "Send a message to a peer by its bridge name. The sender joins "
+            "by sending; the recipient must already have joined, or the send "
+            "is REFUSED and the reply names who is on the bridge (a message "
+            "with no reader is never filed silently). Up to 64,000 "
+            "characters; send a file path for anything larger. Then wait for "
+            "the reply with nxb_bridge_inbox."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "Your bridge name."},
+                "to": {"type": "string",
+                       "description": "The recipient's bridge name, exactly."},
+                "text": {"type": "string", "description": "The message."},
+                "reply_to": {"type": "integer",
+                             "description": "Optional id of the message this "
+                                            "answers."},
+            },
+            "required": ["sender", "to", "text"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_bridge_inbox",
+        "description": (
+            "Read your unread bridge messages. WAITS INSIDE THE CALL for up "
+            "to `wait` seconds (default 45, at most 240) for the first one "
+            "to arrive, so call it ONCE and let it wait rather than calling "
+            "it in a loop: every tool call re-sends your whole context. "
+            "Returns MESSAGES, or EMPTY with how long it waited; EMPTY is not "
+            "a failure, call again. Messages are marked read unless "
+            "mark_read is false."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Your bridge name."},
+                "wait": {"type": "number", "minimum": 0, "maximum": 240,
+                         "default": 45,
+                         "description": "Seconds to wait inside the call for "
+                                        "a message."},
+                "mark_read": {"type": "boolean", "default": True},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200,
+                          "default": 50},
+            },
+            "required": ["name"], "additionalProperties": False,
+        },
+    },
+    {
+        "name": "nxb_bridge_history",
+        "description": ("The conversation between two bridge names, both "
+                        "directions, oldest first, with read flags. "
+                        "Read-only; marks nothing."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string"}, "b": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500,
+                          "default": 50},
+            },
+            "required": ["a", "b"], "additionalProperties": False,
         },
     },
     {
@@ -403,6 +624,67 @@ def call_tool(name, args):
                 expected_revision=args.get("expected_revision")))
         except DraftError as exc:
             raise ToolError(str(exc)) from exc
+
+    if name.startswith("nxb_context_"):
+        from nxb.context import GET_CAP_CHARS, SEARCH_LIMIT, Vault
+
+        vault = Vault(ledger_path)
+        try:
+            if name == "nxb_context_state":
+                return _text(vault.state(args.get("session")))
+            if name == "nxb_context_get":
+                return _text(vault.get(
+                    args.get("key"),
+                    max_chars=args.get("max_chars") or GET_CAP_CHARS,
+                    offset=args.get("offset") or 0))
+            if name == "nxb_context_put":
+                return _text(vault.put(
+                    args.get("key"), args.get("body"),
+                    summary=args.get("summary"), tags=args.get("tags"),
+                    author=args.get("author")))
+            if name == "nxb_context_patch":
+                return _text(vault.patch(
+                    args.get("key"), args.get("section"), args.get("body"),
+                    append=bool(args.get("append")),
+                    author=args.get("author")))
+            if name == "nxb_context_map":
+                return _text(vault.map(args.get("work_dir")))
+            if name == "nxb_context_search":
+                return _text(vault.search(
+                    args.get("query"), limit=args.get("limit") or SEARCH_LIMIT,
+                    prefix=args.get("prefix") or None))
+            if name == "nxb_context_list":
+                return _text(vault.list(args.get("prefix") or ""))
+        finally:
+            vault.close()
+
+    if name.startswith("nxb_bridge_"):
+        from nxb.bridge import DEFAULT_WAIT_S, Bridge
+
+        bridge = Bridge(ledger_path)
+        try:
+            if name == "nxb_bridge_join":
+                return _text(bridge.join(args.get("name"),
+                                         runtime=args.get("runtime"),
+                                         note=args.get("note")))
+            if name == "nxb_bridge_peers":
+                return _text(bridge.peers())
+            if name == "nxb_bridge_send":
+                return _text(bridge.send(args.get("sender"), args.get("to"),
+                                         args.get("text"),
+                                         reply_to=args.get("reply_to")))
+            if name == "nxb_bridge_inbox":
+                wait = args.get("wait")
+                return _text(bridge.inbox(
+                    args.get("name"),
+                    wait=DEFAULT_WAIT_S if wait is None else wait,
+                    mark_read=args.get("mark_read", True),
+                    limit=args.get("limit") or 50))
+            if name == "nxb_bridge_history":
+                return _text(bridge.history(args.get("a"), args.get("b"),
+                                            limit=args.get("limit") or 50))
+        finally:
+            bridge.close()
 
     raise ToolError(f"unknown tool {name!r}")
 

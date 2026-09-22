@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="230" viewBox="0 0 1080 230" role="img" aria-label="Checkpoint loop. Every 60 seconds rig watch reads each pane's token count from its transcript tail. When a pane passes 80 percent of its ceiling, or its rate would carry it past within 240 seconds, nxb types a checkpoint request. The pane writes a bounded note and prints a marker. nxb resets the pane and proves the session id rotated, then types a marked continuation with the same task id. A missing note or marker means no reset; an unproven reset means nothing is typed.">
+  <style>
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#E4E9EE;}
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#E4E9EE;}
+.t{font-size:14px;font-weight:600;}
+.s{font-size:11.5px;fill:#97A3B0;}
+.sm{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#97A3B0;}
+.hdr{font-size:11px;font-weight:600;letter-spacing:.12em;fill:#97A3B0;}
+.lbl{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#97A3B0;paint-order:stroke;stroke:#192027;stroke-width:5px;stroke-linejoin:round;}
+.lbl.g{fill:#B891EA;font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:600;font-size:12px;}
+.lbl.w{fill:#E3A363;}
+.box{fill:#192027;stroke:#35404C;stroke-width:1.5;}
+.op{fill:#2A2138;stroke:#B891EA;stroke-width:1.5;}
+.cc{fill:#35231B;stroke:#E48A5E;stroke-width:1.5;}
+.cx{fill:#172C36;stroke:#5DB4D6;stroke-width:1.5;}
+.store{fill:#232C35;stroke:#35404C;stroke-width:1.2;}
+.band{fill:none;stroke:#35404C;stroke-width:1.2;}
+.tmux{fill:none;stroke:#97A3B0;stroke-width:1.2;stroke-dasharray:5 4;}
+.warnbox{fill:#33261A;stroke:#E3A363;stroke-width:1.2;}
+.ln{fill:none;stroke:#97A3B0;stroke-width:1.4;}
+.ln.g{stroke:#B891EA;stroke-width:2.2;}
+.ln.d{stroke-dasharray:5 4;}
+.ln.w{stroke:#E3A363;stroke-dasharray:4 3;}
+.life{stroke:#35404C;stroke-width:1.2;stroke-dasharray:3 4;}
+.act{fill:#2A2138;stroke:#B891EA;stroke-width:1;}
+.ah{fill:#97A3B0;}
+.ah.g{fill:#B891EA;}
+.ah.w{fill:#E3A363;}
+.tc{fill:#E48A5E;} .tx{fill:#5DB4D6;} .tg{fill:#B891EA;} .tw{fill:#E3A363;}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+</style>
+  <defs>
+    <marker id="f4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="f4w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah w"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1080" height="230" rx="8" fill="#192027"/>
+  <polyline points="975,40 975,20 95,20 95,37" class="ln d" marker-end="url(#f4a)"/>
+  <text x="535" y="24" text-anchor="middle" class="lbl">next rig watch pass, every 60 s</text>
+
+  <rect x="20" y="40" width="150" height="64" rx="5" class="box"/>
+  <text x="95" y="64" text-anchor="middle" class="t">gauge</text>
+  <text x="95" y="82" text-anchor="middle" class="s">transcript tail → tokens</text>
+  <text x="95" y="96" text-anchor="middle" class="s">per pane</text>
+  <line x1="170" y1="72" x2="193" y2="72" class="ln" marker-end="url(#f4a)"/>
+
+  <rect x="196" y="40" width="150" height="64" rx="5" class="box"/>
+  <text x="271" y="64" text-anchor="middle" class="t">trigger</text>
+  <text x="271" y="82" text-anchor="middle" class="s">≥ 80% of the ceiling, or</text>
+  <text x="271" y="96" text-anchor="middle" class="s">rate crosses it in 240 s</text>
+  <line x1="346" y1="72" x2="369" y2="72" class="ln" marker-end="url(#f4a)"/>
+
+  <rect x="372" y="40" width="150" height="64" rx="5" class="box"/>
+  <text x="447" y="64" text-anchor="middle" class="t">ask</text>
+  <text x="447" y="82" text-anchor="middle" class="s">typed checkpoint request</text>
+  <text x="447" y="96" text-anchor="middle" class="s">never mid-turn</text>
+  <line x1="522" y1="72" x2="545" y2="72" class="ln" marker-end="url(#f4a)"/>
+
+  <rect x="548" y="40" width="150" height="64" rx="5" class="cc"/>
+  <text x="623" y="64" text-anchor="middle" class="t">pane writes note</text>
+  <text x="623" y="82" text-anchor="middle" class="sm">checkpoints/&lt;pane&gt;</text>
+  <text x="623" y="96" text-anchor="middle" class="sm">[NXB-CHECKPOINT]</text>
+  <line x1="698" y1="72" x2="721" y2="72" class="ln" marker-end="url(#f4a)"/>
+
+  <rect x="724" y="40" width="150" height="64" rx="5" class="box"/>
+  <text x="799" y="64" text-anchor="middle" class="t mono" style="font-size:12.5px">reset_pane</text>
+  <text x="799" y="82" text-anchor="middle" class="s">/clear, then prove the</text>
+  <text x="799" y="96" text-anchor="middle" class="s">session id rotated</text>
+  <line x1="874" y1="72" x2="897" y2="72" class="ln" marker-end="url(#f4a)"/>
+
+  <rect x="900" y="40" width="150" height="64" rx="5" class="box"/>
+  <text x="975" y="64" text-anchor="middle" class="t">continue</text>
+  <text x="975" y="82" text-anchor="middle" class="s">marked directive,</text>
+  <text x="975" y="96" text-anchor="middle" class="s">same task id</text>
+
+  <line x1="623" y1="104" x2="623" y2="147" class="ln w" marker-end="url(#f4w)"/>
+  <line x1="799" y1="104" x2="799" y2="147" class="ln w" marker-end="url(#f4w)"/>
+  <rect x="548" y="150" width="326" height="58" rx="4" class="warnbox"/>
+  <text x="711" y="172" text-anchor="middle" class="s" style="fill:#E3A363">no note or no marker → no reset</text>
+  <text x="711" y="188" text-anchor="middle" class="s" style="fill:#E3A363">id did not rotate in 20 s → nothing typed</text>
+  <text x="711" y="202" text-anchor="middle" class="sm" style="fill:#E3A363">rig_checkpoint_unconfirmed · rig_reset_unconfirmed</text>
+</svg>

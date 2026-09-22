@@ -14,6 +14,7 @@ cannot be paid quietly also cannot be forgotten.
 
 import inspect
 import json
+import os
 import pathlib
 import tempfile
 
@@ -624,7 +625,531 @@ def rig_4_dispatch_defaults_find_the_standing_rig():
             is not None:
         return False
     root = pathlib.Path(__file__).resolve().parent.parent
-    return "rig_sessions" in (root / "nxb" / "__main__.py").read_text()
+    # nxb-079 moved minting into nxb/minting.py so `rig dispatch` can mint
+    # without a second process; the property is the same, the file moved.
+    return "rig_sessions" in ((root / "nxb" / "__main__.py").read_text()
+                              + (root / "nxb" / "minting.py").read_text())
+
+
+def rig_24_collect_waits_inside_the_command():
+    """RIG-24. `collect` takes a wait budget, dispatch is one command, and
+    the brief tells the orchestrator to use both and never to poll."""
+    from nxb.enroll import orchestrator_rule
+    from nxb.keystroke import collect_reply, dispatch
+    if "wait" not in inspect.signature(collect_reply).parameters:
+        return False
+    if not callable(dispatch):
+        return False
+    text = orchestrator_rule("O", ledger="/l", repo="/r", session="s")
+    return all(t in text for t in ("--wait", "NEVER poll", "rig dispatch",
+                                   "--message-file"))
+
+
+def rig_25_every_launch_carries_a_context_ceiling():
+    """RIG-25. Both launch lines carry a ceiling by default, and a
+    fresh-context send is the default."""
+    import os
+
+    from nxb.keystroke import send_directive
+    from nxb.rig import launch_command
+    if inspect.signature(send_directive).parameters["fresh"].default is not True:
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        cc, _, _ = launch_command(
+            {"name": "W", "runtime": "claude_code", "role": "worker"},
+            ledger=os.path.join(tmp, "l.db"), repo="/r")
+        cx, _, _ = launch_command(
+            {"name": "W", "runtime": "codex", "role": "worker"},
+            ledger=os.path.join(tmp, "l.db"), repo="/r")
+    return "--autocompact" in cc and "model_auto_compact_token_limit" in cx
+
+
+def rig_26_a_downed_rig_is_resumable_on_its_ids():
+    """RIG-26. The record holds the ids and `rig resume` reopens on them."""
+    import os
+
+    from nxb import rig
+    from nxb.keystroke import PANE_RECORD_KEYS
+    from nxb.rig import launch_command
+    if not callable(getattr(rig, "resume", None)):
+        return False
+    if not {"session_id", "thread_id", "instructions"} <= set(PANE_RECORD_KEYS):
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        cc, _, _ = launch_command(
+            {"name": "W", "runtime": "claude_code", "role": "worker",
+             "session_id": "sid"}, ledger=os.path.join(tmp, "l.db"), repo="/r")
+        cx, _, _ = launch_command(
+            {"name": "W", "runtime": "codex", "role": "worker",
+             "resume_thread_id": "tid"}, ledger=os.path.join(tmp, "l.db"),
+            repo="/r")
+    return "--session-id sid" in cc and cx.endswith("resume tid")
+
+
+def rig_27_mint_refuses_a_busy_worker():
+    """RIG-27. A second id for a worker with an unfiled task is refused."""
+    import os
+    import types
+    from unittest import mock
+
+    from nxb.minting import TASK_WORKER_BUSY, mint_task
+    from nxb.roster import RosterEntry
+    roster = types.SimpleNamespace(entries=[
+        RosterEntry("%1", name="W", alive=True, source="rig")])
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger = os.path.join(tmp, "l.db")
+        with mock.patch("nxb.roster.discover", lambda: roster), \
+                mock.patch("nxb.rig.live_rig_sessions", lambda l: []):
+            first, refusal = mint_task(ledger, "W")
+            if refusal is not None or not first:
+                return False
+            second, refusal = mint_task(ledger, "W")
+            return second is None and refusal["reason"] == TASK_WORKER_BUSY
+
+
+def rig_28_a_nudge_has_guards():
+    """RIG-28. The nudge path exists with its three refusals, and health
+    is read-only."""
+    from nxb import rig
+    names = ("RIG_PANE_BUSY", "RIG_NUDGE_THROTTLED", "RIG_NOTHING_TO_NUDGE")
+    if not all(isinstance(getattr(rig, n, None), str) for n in names):
+        return False
+    if not callable(getattr(rig, "nudge", None)):
+        return False
+    return "send_line" not in inspect.getsource(rig.health)
+
+
+def rig_29_collect_delivers_summary_plus_path():
+    """RIG-29. A long filed answer comes back as its SUMMARY and a path."""
+    import os
+    from unittest import mock
+
+    from nxb import keystroke
+    from nxb.keystroke import collect_reply, file_reply, marked_directive
+    from nxb.roster import Roster, RosterEntry
+    from nxb.tasks import TaskRegistry
+    if "SUMMARY:" not in marked_directive("t", "W", "x", ledger="/l", repo="/r"):
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger = os.path.join(tmp, "l.db")
+        reg = TaskRegistry(ledger)
+        try:
+            task, refusal = reg.mint("demo W", Roster([RosterEntry(
+                "%1", name="demo W", alive=True, source="rig")]))
+        finally:
+            reg.close()
+        if refusal:
+            return False
+        file_reply("demo W", task, "SUMMARY: fine.\n\n" + "x\n" * 5000,
+                   ledger=ledger)
+        pane = {"name": "demo W", "runtime": "codex", "pane": "%1",
+                "enrolment": "typed"}
+        with mock.patch.object(keystroke, "_resolve",
+                               lambda w, l, s: (pane, "demo", None)), \
+                mock.patch("nxb.rig.capture_history", lambda p, **k: ""):
+            out = collect_reply("demo W", task, ledger=ledger)
+        return (out.get("answer") == "fine." and not out.get("answer_inline")
+                and os.path.isfile(out.get("answer_path", "")))
+
+
+def rig_30_fresh_workers_are_pointed_at_a_bounded_state_note():
+    """RIG-30. A state note is capped, and a directive names it when it
+    exists."""
+    import os
+
+    from nxb.context import (CONTEXT_NOTE_TOO_BIG, STATE_CAP_CHARS, Vault,
+                             orientation_line, state_key)
+    from nxb.keystroke import marked_directive
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger = os.path.join(tmp, "l.db")
+        vault = Vault(ledger)
+        try:
+            if orientation_line(ledger, "demo") is not None:
+                return False
+            too_big = vault.put(state_key("demo"), "x" * (STATE_CAP_CHARS + 1))
+            if too_big.get("reason") != CONTEXT_NOTE_TOO_BIG:
+                return False
+            vault.put(state_key("demo"), "what exists")
+        finally:
+            vault.close()
+        line = orientation_line(ledger, "demo")
+        if not line or "ORIENT FIRST" not in line:
+            return False
+        text = marked_directive("t", "demo W", "x", ledger=ledger, repo="/r",
+                                orientation=line)
+        return "ORIENT FIRST" in text and text.endswith(
+            "it is how your answer is collected.")
+
+
+def rig_31_checkpoint_gates_the_reset():
+    """RIG-31. checkpoint_pane exists, its refusal is published, and the
+    default ceiling is 100K on both runtimes."""
+    import json
+    import pathlib
+
+    from nxb import rig
+    root = pathlib.Path(__file__).resolve().parent.parent
+    vocab = json.loads((root / "contract" / "rig.json").read_text())
+    if rig.RIG_CHECKPOINT_UNCONFIRMED not in vocab["refusal_vocabulary"]:
+        return False
+    if not callable(getattr(rig, "checkpoint_pane", None)):
+        return False
+    src = inspect.getsource(rig.checkpoint_pane)
+    # nxb-082.3 moved the reset into _finish_checkpoint; the gate is the same.
+    src += inspect.getsource(getattr(rig, "_finish_checkpoint", rig.checkpoint_pane))
+    if "RIG_CHECKPOINT_UNCONFIRMED" not in src or "reset_pane" not in src:
+        return False
+    return rig.DEFAULT_CONTEXT_LIMIT == {"claude_code": 100_000,
+                                         "codex": 100_000}
+
+
+def rig_32_the_vault_has_a_dashboard():
+    """RIG-32. A new vault carries an Obsidian Base with views."""
+    import os
+
+    from nxb.context import BASE_FILENAME, Vault
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = Vault(os.path.join(tmp, "l.db"))
+        try:
+            path = os.path.join(vault.root, BASE_FILENAME)
+            if not os.path.exists(path):
+                return False
+            text = open(path, encoding="utf-8").read()
+        finally:
+            vault.close()
+    return "views:" in text and "card" in text
+
+
+def rig_33_maps_are_offered_and_named():
+    """RIG-33. A map note is bounded, the brief asks for one, and the
+    orientation line names it when it exists."""
+    import os
+
+    from nxb.context import (CONTEXT_NOTE_TOO_BIG, MAP_CAP_CHARS, Vault,
+                             orientation_line, state_key)
+    from nxb.enroll import orchestrator_rule
+    if "context map --session s" not in orchestrator_rule(
+            "O", ledger="/l", repo="/r", session="s"):
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger = os.path.join(tmp, "l.db")
+        vault = Vault(ledger)
+        try:
+            if vault.put("maps/p", "x" * (MAP_CAP_CHARS + 1)).get(
+                    "reason") != CONTEXT_NOTE_TOO_BIG:
+                return False
+            vault.put(state_key("s"), "state")
+            vault.put("maps/p", "modules")
+        finally:
+            vault.close()
+        line = orientation_line(ledger, "s", "/any/p") or ""
+    return "maps/p.md" in line
+
+
+def rig_34_rig_panes_get_the_core_tool_set():
+    """RIG-34. A Claude rig pane launches with the core tools by default,
+    and `tools: all` widens it."""
+    import os
+
+    from nxb.rig import launch_command
+    with tempfile.TemporaryDirectory() as tmp:
+        default, _, _ = launch_command(
+            {"name": "W", "runtime": "claude_code", "role": "worker"},
+            ledger=os.path.join(tmp, "l.db"), repo="/r")
+        widened, _, _ = launch_command(
+            {"name": "W", "runtime": "claude_code", "role": "worker",
+             "tools": "all"}, ledger=os.path.join(tmp, "l.db"), repo="/r")
+    return ("--tools Bash,Read,Edit,Write,Glob,Grep" in default
+            and "--tools" not in widened)
+
+
+CHECKS = {name: obj for name, obj in list(globals().items())
+          if callable(obj) and not name.startswith("_") and name.islower()
+          and getattr(obj, "__module__", None) == __name__}
+
+
+def rig_35_a_live_worker_is_not_superseded():
+    """RIG-35. A supersede aimed at a worker whose transcript moved within
+    five minutes is refused unless forced; WAITING carries last_activity_s."""
+    import inspect
+
+    from nxb import keystroke, minting
+    if not hasattr(keystroke, "last_activity_s"):
+        return False
+    if minting.TASK_WORKER_ACTIVE != "task_worker_active":
+        return False
+    if minting.ACTIVE_WITHIN_S < 60:
+        return False
+    src = inspect.getsource(keystroke._collect_once)
+    vocab = json.loads((_ROOT / "contract" / "roster.json").read_text())
+    return ("last_activity_s" in src
+            and "task_worker_active" in vocab["refusal_vocabulary"]
+            and "force" in inspect.signature(minting.mint_task).parameters)
+
+
+def rig_36_the_checkpoint_pass_holds():
+    """RIG-36. Owed resets, one clock per pass, idle wait before reset, a
+    cap above the request, a stamp that survives, a width-proof marker."""
+    from nxb import context, rig
+    from nxb.enroll import orchestrator_rule
+    if not all(hasattr(rig, n) for n in
+               ("_owed_reset", "_await_idle", "_plan_checkpoint",
+                "_finish_checkpoint", "CHECKPOINT_NOTE_FRESH_S",
+                "CHECKPOINT_IDLE_DEADLINE_S")):
+        return False
+    if context.CHECKPOINT_HARD_CAP_CHARS <= context.CHECKPOINT_CAP_CHARS:
+        return False
+    if "Ask Codex" not in rig.READY_MARKERS["codex"]:
+        return False
+    brief = orchestrator_rule("O", ledger="/l", repo="/r", session="s")
+    return ("rig checkpoint --session s --worker" in brief
+            and "rig usage --session s" in brief)
+
+
+
+def rig_37_a_narrow_pane_reads_busy():
+    """RIG-37. The spinner line and a truncated footer both read busy."""
+    from nxb.keystroke import busy_screen
+    return (busy_screen("✳ Seasoning… (17m 10s · ↓ 14.1k tokens)")
+            and busy_screen("⏵⏵ bypass permissions on · 1 shell · esc to inte…")
+            and not busy_screen("✻ Worked for 14s · done 11:27 PM"))
+
+
+
+def rig_38_the_rig_reports_its_own_cost():
+    """RIG-38. Window pinned, widths in health, stalls in the watch line,
+    duration and checkpoints on a collected task."""
+    import inspect
+
+    from nxb import context, rig
+    from nxb.keystroke import PANE_RECORD_KEYS
+    src = inspect.getsource(rig._build_window)
+    return ("window-size" in src and "resize-window" in src
+            and hasattr(rig, "_stalls") and hasattr(rig, "_pane_widths")
+            and callable(getattr(context, "task_cost", None))
+            and "checkpoints" in PANE_RECORD_KEYS)
+
+
+
+def rig_39_a_clear_is_proven_and_requests_never_stack():
+    """RIG-39. Pending requests wait; queued messages read busy; a Claude
+    reset needs a rotated session id."""
+    from nxb import rig
+    from nxb.keystroke import busy_screen
+    vocab = json.loads((_ROOT / "contract" / "rig.json").read_text())
+    return (rig.RIG_RESET_UNCONFIRMED in vocab["refusal_vocabulary"]
+            and hasattr(rig, "CHECKPOINT_PENDING_S")
+            and busy_screen("❯ Press up to edit queued messages"))
+
+
+
+def rig_40_one_pane_relaunches_in_place():
+    """RIG-40. rig relaunch exists, replaces the process with respawn-pane,
+    and its refusal is published."""
+    import inspect
+
+    from nxb import rig
+    if not callable(getattr(rig, "relaunch_pane", None)):
+        return False
+    src = inspect.getsource(rig.relaunch_pane)
+    vocab = json.loads((_ROOT / "contract" / "rig.json").read_text())
+    return ("respawn-pane" in src and "launch_command" in src
+            and rig.RIG_RELAUNCH_UNCONFIRMED in vocab["refusal_vocabulary"])
+
+
+def _zero_reads_zero():
+    """fullness() must tell a reading of zero from a missing reading."""
+    from nxb import gauge
+    real = gauge.pane_context
+    try:
+        gauge.pane_context = lambda entry: {"tokens": 0, "fresh": True}
+        return gauge.fullness({"context_limit": 140_000}) == (0, 140_000, 0.0)
+    finally:
+        gauge.pane_context = real
+
+
+def rig_41_a_fresh_pane_gauges_zero_not_unknown():
+    """RIG-41. The registry is read by PANE ID, newest record wins, a
+    vouched session with no transcript reads 0, and an unvouched one is
+    still unknown."""
+    from nxb.gauge import pane_context
+    from nxb.roster import session_registry_panes
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        (root / "77.json").write_text(json.dumps(
+            {"pid": 77, "sessionId": "fresh-one", "name": "Builder 1",
+             "tmux": "rig:@1.%9", "startedAt": 2}))
+        (root / "12.json").write_text(json.dumps(
+            {"pid": 12, "sessionId": "dead-one", "name": "Builder 1",
+             "tmux": "rig:@1.%9", "startedAt": 1}))
+        if session_registry_panes(str(root)) != {"%9": "fresh-one"}:
+            return False
+    unvouched = pane_context({"runtime": "claude_code", "pane": "%no-pane",
+                              "session_id": "no-session-of-this-name",
+                              "context_limit": 140_000})
+    if unvouched.get("tokens") is not None:
+        return False
+    return _cleared_reads_zero() and _newest_transcript_wins() \
+        and _zero_reads_zero()
+
+
+def _cleared_reads_zero():
+    """`/clear` writes a transcript holding only metadata; that is zero."""
+    from nxb import gauge
+    meta = ('{"type":"custom-title","customTitle":"Builder 1"}\n'
+            '{"type":"agent-name","agentName":"Builder 1"}\n'
+            '{"type":"mode","mode":"normal"}\n')
+    real = gauge._claude_transcript
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "cleared.jsonl"
+        path.write_text(meta)
+        try:
+            gauge._claude_transcript = lambda sid: str(path)
+            reading = gauge.pane_context({"runtime": "claude_code",
+                                          "session_id": "cleared"})
+        finally:
+            gauge._claude_transcript = real
+    return reading.get("tokens") == 0 and reading.get("fresh") is True
+
+
+def _newest_transcript_wins():
+    """Record and registry both name a session; the newer file is live."""
+    from nxb import gauge
+    turn = ('{"type":"assistant","message":{"usage":'
+            '{"input_tokens":%d,"cache_read_input_tokens":0}}}\n')
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        (root / "old.jsonl").write_text(turn % 90000)
+        (root / "new.jsonl").write_text(turn % 1234)
+        os.utime(root / "old.jsonl", (1, 1))
+        real_t, real_p = gauge._claude_transcript, None
+        from nxb import roster
+        real_p = roster.session_registry_panes
+        try:
+            gauge._claude_transcript = lambda sid: (
+                str(root / f"{sid}.jsonl")
+                if (root / f"{sid}.jsonl").exists() else None)
+            roster.session_registry_panes = lambda *a, **k: {"%1": "new"}
+            entry = {"runtime": "claude_code", "pane": "%1",
+                     "session_id": "old"}
+            reading = gauge.pane_context(entry)
+        finally:
+            gauge._claude_transcript = real_t
+            roster.session_registry_panes = real_p
+    return reading.get("tokens") == 1234 and entry["session_id"] == "new"
+
+
+def rig_42_the_watch_line_reports_the_machine():
+    """RIG-42. health carries a machine block, the watch line prints one,
+    narrow panes name their client, and `warn` alone is not an alarm."""
+    from nxb import machine, rig
+    calm = {"pressure": 2, "pressure_name": "warn", "swap_used_gb": 2.8,
+            "load1": 3.5, "cores": 10, "free_gb": 3.0, "simulators": 1,
+            "companions": 8}
+    swamped = dict(calm, swap_used_gb=25.0, load1=14.2)
+    if machine.strained(calm) or not machine.strained(swamped):
+        return False
+    if "orphan companion" not in machine.line(calm):
+        return False
+    if "MACHINE STRAINED" not in machine.line(dict(swamped, strained=True)):
+        return False
+    if not callable(getattr(machine, "clients", None)):
+        return False
+    return ("machine.snapshot" in inspect.getsource(rig.health)
+            and "machine.line" in inspect.getsource(rig.watch)
+            and "narrow panes" in inspect.getsource(rig.watch))
+
+
+def rig_43_a_rising_pane_is_asked_before_the_line():
+    """RIG-43. The measured 11:50 to 11:54 AM sequence: silent at 43
+    percent, firing at 72, silent when steady, and the plan bypasses the
+    level test but never the nothing-outstanding test."""
+    import time as _time
+
+    from nxb import rig
+    ceiling, now = 140_000, _time.monotonic()
+    line = ceiling * rig._effective_threshold(ceiling, rig.CHECKPOINT_THRESHOLD)
+    history = {}
+    if rig._rising_past_the_line("B1", 60_200, line, 0.43, history):
+        return False                       # 43 percent: room for a pass
+    history["B1"] = (60_200, now - 60)
+    if not rig._rising_past_the_line("B1", 100_800, line, 0.72, history):
+        return False                       # 72 percent, 40K a minute: ask
+    history["B1"] = (100_800, now - 60)
+    if rig._rising_past_the_line("B1", 101_000, line, 0.72, history):
+        return False                       # steady at 72 percent: leave it
+    if rig._rising_past_the_line("B1", 60_200, line, 0.43,
+                                 {"B1": (20_000, now - 60)}):
+        return False                       # fast but under the floor
+    # RIG-46, the class of fire the correction removes. Constructed, not
+    # measured: a pane at 59 percent, the fraction two of the six spurious
+    # fires happened at, rising 15K a minute. The old rule projected that
+    # to the CEILING over four minutes, 142,600, and asked. The corrected
+    # rule projects one pass to the ASK-LINE, 97,600 against 105,000, and
+    # leaves it alone, because the 35K it would have reserved twice is
+    # already reserved once by _effective_threshold.
+    if rig._rising_past_the_line("B2", 82_600, line, 0.59,
+                                 {"B2": (67_600, now - 60)}):
+        return False
+    if 82_600 + 250 * 240 < ceiling:       # the old rule really did fire
+        return False
+    src = inspect.getsource(rig._plan_checkpoint)
+    return (rig.CHECKPOINT_HORIZON_S >= 60.0
+            and 0.0 < rig.CHECKPOINT_RATE_FLOOR < rig.CHECKPOINT_THRESHOLD
+            and "not rising and (fraction is None" in src
+            and 'if not held and entry.get("role") != "orchestrator" '
+                'and not force:' in src)
+
+
+def rig_44_the_threshold_allows_for_the_ask():
+    """RIG-44. Every ceiling with room for it is asked early enough that
+    the measured cost of the ask still lands under the ceiling."""
+    from nxb.rig import (CHECKPOINT_RATE_FLOOR, CHECKPOINT_REQUEST_COST,
+                         CHECKPOINT_THRESHOLD, _effective_threshold)
+    if CHECKPOINT_REQUEST_COST < 30_000:
+        return False                       # measured at 33K and 43K
+    for limit in (100_000, 140_000, 150_000, 160_000, 258_400):
+        ask = _effective_threshold(limit, CHECKPOINT_THRESHOLD)
+        if ask > CHECKPOINT_THRESHOLD or ask < CHECKPOINT_RATE_FLOOR:
+            return False
+        if ask * limit + CHECKPOINT_REQUEST_COST > limit + 1:
+            return False                   # still over when it resets
+    # A ceiling too small for the ask is floored, not driven to nothing.
+    if _effective_threshold(40_000, CHECKPOINT_THRESHOLD) \
+            != CHECKPOINT_RATE_FLOOR:
+        return False
+    return _effective_threshold(None, CHECKPOINT_THRESHOLD) \
+        == CHECKPOINT_THRESHOLD
+
+
+def rig_45_a_late_clear_does_not_strand_a_worker():
+    """RIG-45. The continuation is separable from the reset, an unproven
+    clear drops the pending stamp, and a stranded pane is derived from
+    state: fresh, unasked, holding a task, note newer than the reset."""
+    from nxb import rig
+    from nxb.keystroke import PANE_RECORD_KEYS
+    if not callable(getattr(rig, "_continue_from_note", None)):
+        return False
+    if "reset_unproven_at" not in PANE_RECORD_KEYS:
+        return False
+    finish = inspect.getsource(rig._finish_checkpoint)
+    if ("RIG_RESET_UNCONFIRMED" not in finish
+            or "clear=True" not in finish
+            or "_note_unproven_reset" not in finish):
+        return False
+    plan = inspect.getsource(rig._plan_checkpoint)
+    owed = inspect.getsource(rig._continuation_owed)
+    # Derived from state, and checked BEFORE the pending stamp can block it.
+    if plan.index("_continuation_owed") > plan.index("CHECKPOINT_PENDING_S"):
+        return False
+    if not all(clause in owed for clause in
+               ('reading.get("fresh")', 'reading.get("asked")',
+                "CONTINUATION_OWED_AFTER_S", "_is_busy")):
+        return False
+    return (rig.CONTINUATION_OWED_AFTER_S >= 60.0
+            and rig.CONTINUATION_OWED_AFTER_S < rig.CHECKPOINT_NOTE_FRESH_S
+            and 'plan["action"] == "continue"'
+            in inspect.getsource(rig.checkpoint_rig))
 
 
 CHECKS = {name: obj for name, obj in list(globals().items())

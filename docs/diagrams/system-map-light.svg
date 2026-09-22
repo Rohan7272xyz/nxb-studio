@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="650" viewBox="0 0 1120 650" role="img" aria-label="NXB system map. The operator composes a fleet in the Studio page, or an MCP agent writes a draft through the nxb MCP server. Both write drafts to disk. Only the Studio server's Bring it to life request calls rig.stand_up, which builds a tmux session with an orchestrator pane and Claude and Codex worker panes. The orchestrator dispatches to workers and collects their filed replies. Workers validate task ids against ledger.db. rig watch checkpoints and resets panes. All state lives under ~/.nxb.">
+  <style>
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+text{font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#17202A;}
+.t{font-size:14px;font-weight:600;}
+.s{font-size:11.5px;fill:#586472;}
+.sm{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;}
+.hdr{font-size:11px;font-weight:600;letter-spacing:.12em;fill:#586472;}
+.lbl{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;fill:#586472;paint-order:stroke;stroke:#FFFFFF;stroke-width:5px;stroke-linejoin:round;}
+.lbl.g{fill:#6F3AA8;font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:600;font-size:12px;}
+.lbl.w{fill:#A0561A;}
+.box{fill:#FFFFFF;stroke:#CBD3DC;stroke-width:1.5;}
+.op{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1.5;}
+.cc{fill:#F8E9E1;stroke:#B4552C;stroke-width:1.5;}
+.cx{fill:#E0EFF5;stroke:#1C6A88;stroke-width:1.5;}
+.store{fill:#E4E9EE;stroke:#CBD3DC;stroke-width:1.2;}
+.band{fill:none;stroke:#CBD3DC;stroke-width:1.2;}
+.tmux{fill:none;stroke:#586472;stroke-width:1.2;stroke-dasharray:5 4;}
+.warnbox{fill:#FBF0E4;stroke:#A0561A;stroke-width:1.2;}
+.ln{fill:none;stroke:#586472;stroke-width:1.4;}
+.ln.g{stroke:#6F3AA8;stroke-width:2.2;}
+.ln.d{stroke-dasharray:5 4;}
+.ln.w{stroke:#A0561A;stroke-dasharray:4 3;}
+.life{stroke:#CBD3DC;stroke-width:1.2;stroke-dasharray:3 4;}
+.act{fill:#EFE6F8;stroke:#6F3AA8;stroke-width:1;}
+.ah{fill:#586472;}
+.ah.g{fill:#6F3AA8;}
+.ah.w{fill:#A0561A;}
+.tc{fill:#B4552C;} .tx{fill:#1C6A88;} .tg{fill:#6F3AA8;} .tw{fill:#A0561A;}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+</style>
+  <defs>
+    <marker id="f1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="f1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah g"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1120" height="650" rx="8" fill="#FFFFFF"/>
+
+  <!-- operator -->
+  <rect x="430" y="24" width="260" height="50" rx="6" class="op"/>
+  <text x="560" y="45" text-anchor="middle" class="t tg">Operator</text>
+  <text x="560" y="63" text-anchor="middle" class="s">Rohan, at the keyboard</text>
+  <polyline points="430,49 135,49 135,121" class="ln" marker-end="url(#f1a)"/>
+  <text x="282" y="42" text-anchor="middle" class="lbl">draws the fleet</text>
+  <polyline points="690,49 900,49 900,151" class="ln" marker-end="url(#f1a)"/>
+  <text x="795" y="42" text-anchor="middle" class="lbl">talks in plain language</text>
+
+  <!-- column headers -->
+  <text x="30" y="110" class="hdr">COMPOSE</text>
+  <text x="510" y="110" class="hdr">LAUNCH · OPERATE</text>
+  <text x="710" y="110" class="hdr">RUN</text>
+
+  <!-- compose -->
+  <rect x="30" y="124" width="210" height="64" rx="5" class="box"/>
+  <text x="135" y="151" text-anchor="middle" class="t">Studio page</text>
+  <text x="135" y="169" text-anchor="middle" class="s">canvas · inspector · usage</text>
+
+  <rect x="270" y="124" width="210" height="64" rx="5" class="box"/>
+  <text x="375" y="151" text-anchor="middle" class="t">Any MCP agent</text>
+  <text x="375" y="169" text-anchor="middle" class="s">a Claude Code or Codex session</text>
+
+  <line x1="135" y1="188" x2="135" y2="251" class="ln" marker-end="url(#f1a)"/>
+  <text x="143" y="224" class="lbl">/api/*</text>
+  <line x1="375" y1="188" x2="375" y2="251" class="ln" marker-end="url(#f1a)"/>
+  <text x="383" y="224" class="lbl">draft tools</text>
+
+  <rect x="30" y="254" width="210" height="64" rx="5" class="box"/>
+  <text x="135" y="278" text-anchor="middle" class="t">Studio server</text>
+  <text x="135" y="295" text-anchor="middle" class="sm">127.0.0.1:8787 · launchd</text>
+  <text x="135" y="310" text-anchor="middle" class="s">token + loopback Host check</text>
+
+  <rect x="270" y="254" width="210" height="64" rx="5" class="box"/>
+  <text x="375" y="278" text-anchor="middle" class="t">nxb MCP server</text>
+  <text x="375" y="295" text-anchor="middle" class="sm">python3 -m nxb.mcp</text>
+  <text x="375" y="310" text-anchor="middle" class="s">drafts, context, bridge · no launch</text>
+
+  <!-- the human gate -->
+  <polyline points="135,318 135,362 545,362 545,322" class="ln g" marker-end="url(#f1g)"/>
+  <text x="482" y="354" text-anchor="middle" class="lbl g">Bring it to life</text>
+  <text x="482" y="378" text-anchor="middle" class="lbl">POST /api/rig/up</text>
+
+  <!-- launch / operate -->
+  <rect x="510" y="124" width="150" height="64" rx="5" class="box"/>
+  <text x="585" y="148" text-anchor="middle" class="t">rig watch</text>
+  <text x="585" y="165" text-anchor="middle" class="s">reads transcript tails</text>
+  <text x="585" y="180" text-anchor="middle" class="s">checkpoint → reset</text>
+  <line x1="660" y1="170" x2="727" y2="170" class="ln" marker-end="url(#f1a)"/>
+
+  <rect x="510" y="254" width="150" height="64" rx="5" class="box"/>
+  <text x="585" y="278" text-anchor="middle" class="t mono" style="font-size:13px">rig.stand_up</text>
+  <text x="585" y="296" text-anchor="middle" class="s">build · launch · name</text>
+  <text x="585" y="310" text-anchor="middle" class="s">enrol · brief</text>
+  <line x1="660" y1="286" x2="707" y2="286" class="ln" marker-end="url(#f1a)"/>
+  <text x="684" y="279" text-anchor="middle" class="lbl">spawns</text>
+
+  <!-- run: tmux -->
+  <rect x="710" y="124" width="380" height="300" rx="6" class="tmux"/>
+  <text x="900" y="414" text-anchor="middle" class="sm">tmux session &lt;rig&gt;</text>
+
+  <rect x="730" y="154" width="340" height="64" rx="5" class="box"/>
+  <text x="900" y="180" text-anchor="middle" class="t">Orchestrator pane</text>
+  <text x="900" y="198" text-anchor="middle" class="s">launch brief: list the fleet, dispatch, collect</text>
+
+  <line x1="780" y1="218" x2="780" y2="297" class="ln" marker-end="url(#f1a)"/>
+  <text x="786" y="264" class="lbl">dispatch</text>
+  <line x1="850" y1="300" x2="850" y2="221" class="ln d" marker-end="url(#f1a)"/>
+  <text x="856" y="264" class="lbl">collect</text>
+  <line x1="960" y1="218" x2="960" y2="297" class="ln" marker-end="url(#f1a)"/>
+  <text x="966" y="264" class="lbl">dispatch</text>
+  <line x1="1030" y1="300" x2="1030" y2="221" class="ln d" marker-end="url(#f1a)"/>
+  <text x="1036" y="264" class="lbl">collect</text>
+
+  <rect x="730" y="300" width="160" height="72" rx="5" class="cc"/>
+  <text x="810" y="326" text-anchor="middle" class="t tc">CC Worker 1</text>
+  <text x="810" y="344" text-anchor="middle" class="s">claude · named at launch</text>
+  <text x="810" y="360" text-anchor="middle" class="sm">--session-id &lt;uuid&gt;</text>
+
+  <rect x="910" y="300" width="160" height="72" rx="5" class="cx"/>
+  <text x="990" y="326" text-anchor="middle" class="t tx">CX Worker 1</text>
+  <text x="990" y="344" text-anchor="middle" class="s">codex · /rename after boot</text>
+  <text x="990" y="360" text-anchor="middle" class="s">typed enrolment rule</text>
+
+  <!-- writes into state -->
+  <line x1="80" y1="318" x2="80" y2="503" class="ln" marker-end="url(#f1a)"/>
+  <text x="88" y="450" class="lbl">save · poll 5 s</text>
+  <polyline points="300,318 300,470 190,470 190,503" class="ln" marker-end="url(#f1a)"/>
+  <text x="245" y="464" text-anchor="middle" class="lbl">CAS save</text>
+  <line x1="410" y1="318" x2="410" y2="503" class="ln" marker-end="url(#f1a)"/>
+  <text x="418" y="450" class="lbl">context_*</text>
+  <line x1="620" y1="318" x2="620" y2="503" class="ln" marker-end="url(#f1a)"/>
+  <text x="628" y="450" class="lbl">save_rig</text>
+  <line x1="770" y1="372" x2="770" y2="503" class="ln" marker-end="url(#f1a)"/>
+  <text x="778" y="450" class="lbl">validate id</text>
+  <line x1="1030" y1="372" x2="1030" y2="503" class="ln" marker-end="url(#f1a)"/>
+  <text x="1022" y="450" text-anchor="end" class="lbl">rig reply</text>
+
+  <!-- state band -->
+  <rect x="30" y="494" width="1060" height="138" rx="6" class="band"/>
+  <rect x="46" y="506" width="190" height="84" rx="4" class="store"/>
+  <text x="141" y="532" text-anchor="middle" class="t mono" style="font-size:13px">studio-drafts/</text>
+  <text x="141" y="551" text-anchor="middle" class="s">one JSON file per draft</text>
+  <text x="141" y="567" text-anchor="middle" class="s">revision CAS · trash/</text>
+
+  <rect x="270" y="506" width="210" height="84" rx="4" class="store"/>
+  <text x="375" y="532" text-anchor="middle" class="t">vault</text>
+  <text x="375" y="551" text-anchor="middle" class="sm">~/Vellum/NXB</text>
+  <text x="375" y="567" text-anchor="middle" class="s">STATE · reports · checkpoints · maps</text>
+
+  <rect x="510" y="506" width="150" height="84" rx="4" class="store"/>
+  <text x="585" y="532" text-anchor="middle" class="t mono" style="font-size:13px">rig-&lt;s&gt;.json</text>
+  <text x="585" y="551" text-anchor="middle" class="s">panes · session ids</text>
+  <text x="585" y="567" text-anchor="middle" class="s">flags · layout</text>
+
+  <rect x="730" y="506" width="160" height="84" rx="4" class="store"/>
+  <text x="810" y="532" text-anchor="middle" class="t mono" style="font-size:13px">ledger.db</text>
+  <text x="810" y="551" text-anchor="middle" class="s">issued_tasks · receipts</text>
+  <text x="810" y="567" text-anchor="middle" class="s">bridge mailbox</text>
+
+  <rect x="910" y="506" width="160" height="84" rx="4" class="store"/>
+  <text x="990" y="532" text-anchor="middle" class="t mono" style="font-size:13px">replies/</text>
+  <text x="990" y="551" text-anchor="middle" class="sm">&lt;task_id&gt;.json</text>
+  <text x="990" y="567" text-anchor="middle" class="s">read first by collect</text>
+
+  <text x="46" y="617" class="sm">~/.nxb/ · all state on this Mac, outside the repo · the vault was relocated into Obsidian</text>
+</svg>

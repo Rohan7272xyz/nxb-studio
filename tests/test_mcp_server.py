@@ -32,7 +32,15 @@ class Protocol(unittest.TestCase):
     def test_dispatch_and_studio_tools_are_offered(self):
         names = [t["name"] for t in rpc("tools/list")["result"]["tools"]]
         self.assertEqual(sorted(names),
-                         ["nxb_collect", "nxb_dispatch", "nxb_pending",
+                         ["nxb_bridge_history", "nxb_bridge_inbox",
+                          "nxb_bridge_join", "nxb_bridge_peers",
+                          "nxb_bridge_send",
+                          "nxb_collect",
+                          "nxb_context_get", "nxb_context_list",
+                          "nxb_context_map", "nxb_context_patch",
+                          "nxb_context_put", "nxb_context_search",
+                          "nxb_context_state",
+                          "nxb_dispatch", "nxb_pending",
                           "nxb_studio_catalog", "nxb_studio_draft_delete",
                           "nxb_studio_draft_get", "nxb_studio_draft_list",
                           "nxb_studio_draft_save",
